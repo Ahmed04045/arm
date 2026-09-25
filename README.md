@@ -1,4 +1,4 @@
-# QU-ARS Red Amaranth Agent Network
+# QU-ARS Red Amaranth Agent Network 0.8v
 
 Hackathon project: an **Agent Controller** designs a network of specialist AI **departments** for an existing red/purple amaranth (*Amaranthus cruentus*) farm at the Qatar University Agricultural Research Station. The network reads farm state from the master device (the **EZFarm** ESP32 gateway). The farmer gets three things:
 
