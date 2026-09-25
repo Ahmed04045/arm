@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 # Hydro Monitor: the agentic part (hackathon MVP)
+=======
+# QU-ARS Red Amaranth Agent Network 0.8v
+>>>>>>> 04a7b32b74c8b4646de3d4683f87f96d71ef6815
 
 This is the AI side of **Hydro Monitor** (see `docs/Hydro Monitor_ Project Plan (2).pdf`). It's a sensing and control kit for small farms, looked after by a team of AI specialists built for each farm.
 - Sensors report to a master node (ESP32), which logs every reading and switches pumps to keep conditions inside safe ranges.
