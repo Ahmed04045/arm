@@ -1,0 +1,41 @@
+{
+  "_about": "Where each model named in the network spec actually runs. 'map' reroutes a spec model; 'fallback' serves any model that is neither routed nor installed. Free OpenRouter model IDs change often: check https://openrouter.ai/models?q=free and edit.",
+
+  "local": {
+    "description": "Everything on this laptop through Ollama. No internet needed.",
+    "fallback": "qwen2.5:3b",
+    "map": {}
+  },
+
+  "openrouter": {
+    "description": "Each department on a different free OpenRouter model. Needs OPENROUTER_API_KEY and internet.",
+    "fallback": "openrouter:qwen/qwen3.8-27b:free",
+    "map": {
+      "llama3.2:3b": "openrouter:google/gemma-4-26b-a4b-it:free",
+      "gemma2:2b":   "openrouter:nvidia/nemotron-3-super-120b-a12b:free",
+      "phi3.5":      "openrouter:qwen/qwen3.8-27b:free",
+      "qwen2.5:3b":  "openrouter:z-ai/glm-5.2:free",
+      "qwen2.5:7b":  "openrouter:google/gemma-4-31b-it:free"
+    }
+  },
+
+  "hybrid": {
+    "description": "Departments run locally; only the Farm Director uses a large free cloud model.",
+    "fallback": "qwen2.5:3b",
+    "map": {
+      "qwen2.5:7b": "openrouter:google/gemma-4-31b-it:free"
+    }
+  },
+
+  "local-api-test": {
+    "description": "Tests the cloud code path against local Ollama's OpenAI-compatible endpoint.",
+    "fallback": "ollama-api:qwen2.5:3b",
+    "map": {
+      "llama3.2:3b": "ollama-api:qwen2.5:3b",
+      "gemma2:2b": "ollama-api:qwen2.5:3b",
+      "phi3.5": "ollama-api:qwen2.5:3b",
+      "qwen2.5:3b": "ollama-api:qwen2.5:3b",
+      "qwen2.5:7b": "ollama-api:qwen2.5:3b"
+    }
+  }
+}

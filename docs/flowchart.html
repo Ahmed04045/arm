@@ -1,0 +1,400 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Amaranth Network Flow</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --bg: #f4f7f3;
+    --surface: #ffffff;
+    --ink: #16211b;
+    --muted: #5d6b63;
+    --line: #c9d4cc;
+    --leaf: #2f7a4c;
+    --leaf-soft: #e3f0e7;
+    --amaranth: #a3195b;
+    --amaranth-soft: #f8e4ee;
+    --on-amaranth: #ffffff;
+    --dormant: #9aa69f;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --bg: #0f1512; --surface: #17201b; --ink: #e2eae5; --muted: #95a59c; --line: #2f3d35;
+      --leaf: #6cc08e; --leaf-soft: #1a2c21; --amaranth: #e0609a; --amaranth-soft: #35182a;
+      --on-amaranth: #1a0710; --dormant: #5f6d65;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0f1512; --surface: #17201b; --ink: #e2eae5; --muted: #95a59c; --line: #2f3d35;
+    --leaf: #6cc08e; --leaf-soft: #1a2c21; --amaranth: #e0609a; --amaranth-soft: #35182a;
+    --on-amaranth: #1a0710; --dormant: #5f6d65;
+  }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font: 400 15px/1.6 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 1180px; margin: 0 auto; padding-inline: 20px; padding-block: 36px 56px; display: grid; gap: 40px; }
+  header { display: grid; gap: 10px; max-width: 70ch; }
+  .eyebrow { font: 500 12px/1 "IBM Plex Mono", ui-monospace, Menlo, monospace; letter-spacing: .08em; text-transform: uppercase; color: var(--leaf); }
+  h1 { font: 700 clamp(30px, 4.4vw, 46px)/1.05 "Bricolage Grotesque", "IBM Plex Sans", system-ui, sans-serif; letter-spacing: -0.02em; margin: 0; text-wrap: balance; }
+  h2 { font: 600 22px/1.2 "Bricolage Grotesque", "IBM Plex Sans", system-ui, sans-serif; margin: 0; text-wrap: balance; }
+  p { margin: 0; }
+  .lede { color: var(--muted); font-size: 16px; }
+  code, .mono { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; font-size: .88em; }
+
+  section { display: grid; gap: 14px; }
+  .section-head { display: grid; gap: 6px; max-width: 72ch; }
+  .section-head p { color: var(--muted); }
+
+  figure { margin: 0; display: grid; gap: 10px; }
+  .canvas { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; overflow-x: auto; padding: 12px; }
+  .canvas svg { display: block; width: 100%; min-width: 860px; height: auto; color: var(--ink); }
+  figcaption { color: var(--muted); font-size: 14px; max-width: 80ch; }
+
+  /* SVG classes (themed through the same tokens) */
+  .box { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+  .hw { fill: var(--leaf-soft); stroke: var(--leaf); stroke-width: 1.4; }
+  .zone { fill: none; stroke: var(--line); stroke-width: 1.2; stroke-dasharray: 5 4; }
+  .ai { fill: var(--amaranth); stroke: var(--amaranth); }
+  .ai-soft { fill: var(--amaranth-soft); stroke: var(--amaranth); stroke-width: 1.3; }
+  .ai-dash { fill: var(--surface); stroke: var(--amaranth); stroke-width: 1.3; stroke-dasharray: 5 4; }
+  .pill { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+  .sleep { fill: none; stroke: var(--dormant); stroke-width: 1; stroke-dasharray: 4 3; }
+  .wire { fill: none; stroke: var(--muted); stroke-width: 1.4; }
+  .wire-ai { fill: none; stroke: var(--amaranth); stroke-width: 1.5; }
+  .wire-dash { fill: none; stroke: var(--muted); stroke-width: 1.3; stroke-dasharray: 5 4; }
+  .t { fill: var(--ink); font: 600 13px "IBM Plex Sans", system-ui, sans-serif; }
+  .s { fill: var(--muted); font: 400 11.5px "IBM Plex Sans", system-ui, sans-serif; }
+  .m { fill: var(--muted); font: 400 11px "IBM Plex Mono", ui-monospace, monospace; }
+  .t-on { fill: var(--on-amaranth); font: 600 13px "IBM Plex Sans", system-ui, sans-serif; }
+  .s-on { fill: var(--on-amaranth); font: 400 11.5px "IBM Plex Sans", system-ui, sans-serif; opacity: .9; }
+  .t-ai { fill: var(--amaranth); font: 600 12px "IBM Plex Sans", system-ui, sans-serif; }
+  .t-sleep { fill: var(--dormant); font: 400 12px "IBM Plex Sans", system-ui, sans-serif; }
+  .lane { fill: var(--leaf); font: 500 11px "IBM Plex Mono", ui-monospace, monospace; letter-spacing: .06em; }
+  .head { fill: var(--ink); font: 600 11.5px "IBM Plex Mono", ui-monospace, monospace; letter-spacing: .03em; }
+  .arrow { fill: var(--muted); }
+  .arrow-ai { fill: var(--amaranth); }
+
+  .cadence { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .tick { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 6px; align-content: start; }
+  .tick .when { font: 600 26px/1 "Bricolage Grotesque", system-ui, sans-serif; font-variant-numeric: tabular-nums; }
+  .tick .who { font: 500 12px/1.2 "IBM Plex Mono", ui-monospace, monospace; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+  .tick.ai-tick .when { color: var(--amaranth); }
+  .tick p { color: var(--muted); font-size: 14px; }
+
+  .table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+  table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font: 500 12px "IBM Plex Mono", ui-monospace, monospace; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+  tr:last-child td { border-bottom: 0; }
+  td:first-child { white-space: nowrap; }
+  td.size { font-variant-numeric: tabular-nums; color: var(--muted); white-space: nowrap; }
+
+  .rules { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .rule { border-left: 3px solid var(--leaf); padding: 4px 0 4px 14px; display: grid; gap: 4px; }
+  .rule.ai-rule { border-left-color: var(--amaranth); }
+  .rule strong { font-weight: 600; }
+  .rule p { color: var(--muted); font-size: 14px; }
+
+  @media (max-width: 720px) {
+    .cadence, .rules { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">QU-ARS · red amaranth · EZFarm</div>
+    <h1>How the agent network works</h1>
+    <p class="lede">Sensor readings travel from the beds to the laptop, where 16 AI agents in four departments check them against the crop's ranges. The answer goes back to the ESP32 as a status colour, a ranked list of actions and a short briefing.</p>
+  </header>
+
+  <section>
+    <div class="section-head">
+      <h2>The full loop</h2>
+      <p>Green is the EZFarm hardware and firmware, which stays unchanged. Magenta is the agent network on the laptop.</p>
+    </div>
+    <figure>
+      <div class="canvas">
+        <svg viewBox="0 0 1200 440" role="img" aria-label="Sensors feed a Nano node, which radios readings every 10 seconds to the ESP32 gateway. The gateway publishes them to the MQTT broker on the laptop. The bridge calibrates them, buckets them every 60 seconds, runs the agent network and publishes retained answers back through the broker to the ESP32, which shows them and can set the node LEDs.">
+          <defs>
+            <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="arrow"/></marker>
+            <marker id="aa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="arrow-ai"/></marker>
+          </defs>
+
+          <!-- lane labels -->
+          <text x="16" y="36" class="lane">DATA IN →</text>
+          <text x="16" y="432" class="lane">← ANSWERS OUT</text>
+
+          <!-- sensors -->
+          <rect x="16" y="56" width="160" height="128" rx="8" class="hw"/>
+          <text x="30" y="80" class="t">Sensors</text>
+          <text x="30" y="102" class="s">DHT11 temp + humidity</text>
+          <text x="30" y="120" class="s">BH1750 light</text>
+          <text x="30" y="138" class="s">MQ-135 air quality</text>
+          <text x="30" y="156" class="s">soil moisture</text>
+          <text x="30" y="174" class="s">tank water level</text>
+
+          <!-- nano -->
+          <rect x="226" y="90" width="132" height="60" rx="8" class="hw"/>
+          <text x="292" y="116" text-anchor="middle" class="t">Nano node</text>
+          <text x="292" y="134" text-anchor="middle" class="s">edge device · per bed</text>
+
+          <!-- screen -->
+          <rect x="226" y="342" width="132" height="60" rx="8" class="hw"/>
+          <text x="292" y="368" text-anchor="middle" class="t">ESP32 screen</text>
+          <text x="292" y="386" text-anchor="middle" class="s">built by your friend</text>
+
+          <!-- esp32 -->
+          <rect x="420" y="56" width="150" height="360" rx="8" class="hw"/>
+          <text x="495" y="84" text-anchor="middle" class="t">ESP32 gateway</text>
+          <text x="495" y="102" text-anchor="middle" class="s">master device</text>
+          <text x="495" y="240" text-anchor="middle" class="s">own range check</text>
+          <text x="495" y="256" text-anchor="middle" class="s">keeps working if</text>
+          <text x="495" y="272" text-anchor="middle" class="s">the laptop is off</text>
+
+          <!-- broker -->
+          <rect x="680" y="56" width="140" height="360" rx="8" class="box"/>
+          <text x="750" y="84" text-anchor="middle" class="t">MQTT broker</text>
+          <text x="750" y="102" text-anchor="middle" class="s">Mosquitto · laptop</text>
+
+          <!-- bridge -->
+          <rect x="880" y="20" width="304" height="408" rx="10" class="zone"/>
+          <text x="900" y="44" class="m">ezfarm_bridge.py</text>
+          <rect x="900" y="98" width="264" height="44" rx="7" class="ai-soft"/>
+          <text x="1032" y="125" text-anchor="middle" class="t">Calibrate raw ADC → units</text>
+          <rect x="900" y="162" width="264" height="44" rx="7" class="ai-soft"/>
+          <text x="1032" y="189" text-anchor="middle" class="t">Bucket per node · every 60 s</text>
+          <rect x="900" y="226" width="264" height="44" rx="7" class="ai"/>
+          <text x="1032" y="247" text-anchor="middle" class="t-on">Run agent network</text>
+          <text x="1032" y="262" text-anchor="middle" class="s-on">4 departments · rule-checked</text>
+          <rect x="950" y="292" width="214" height="40" rx="7" class="ai-dash"/>
+          <text x="1057" y="316" text-anchor="middle" class="t-ai">Briefing · 06:00 / 18:00 / on ask</text>
+          <rect x="900" y="350" width="264" height="44" rx="7" class="ai-soft"/>
+          <text x="1032" y="377" text-anchor="middle" class="t">Publish answers · retained</text>
+
+          <!-- inbound path -->
+          <line x1="176" y1="120" x2="224" y2="120" class="wire" marker-end="url(#a)"/>
+          <text x="200" y="112" text-anchor="middle" class="m">raw</text>
+          <line x1="358" y1="120" x2="418" y2="120" class="wire" marker-end="url(#a)"/>
+          <text x="388" y="138" text-anchor="middle" class="m">RF · 10 s</text>
+          <line x1="570" y1="120" x2="678" y2="120" class="wire" marker-end="url(#a)"/>
+          <text x="624" y="112" text-anchor="middle" class="m">reading/&lt;sensor&gt;</text>
+          <line x1="820" y1="120" x2="898" y2="120" class="wire" marker-end="url(#a)"/>
+          <text x="859" y="138" text-anchor="middle" class="m">subscribe</text>
+
+          <!-- inside bridge -->
+          <line x1="1032" y1="142" x2="1032" y2="160" class="wire-ai" marker-end="url(#aa)"/>
+          <line x1="1032" y1="206" x2="1032" y2="224" class="wire-ai" marker-end="url(#aa)"/>
+          <line x1="925" y1="270" x2="925" y2="348" class="wire-ai" marker-end="url(#aa)"/>
+          <line x1="1100" y1="270" x2="1100" y2="290" class="wire-ai" stroke-dasharray="4 3" marker-end="url(#aa)"/>
+          <line x1="1100" y1="332" x2="1100" y2="348" class="wire-ai" stroke-dasharray="4 3" marker-end="url(#aa)"/>
+
+          <!-- thresholds -->
+          <line x1="880" y1="300" x2="822" y2="300" class="wire-dash" marker-end="url(#a)"/>
+          <text x="851" y="292" text-anchor="middle" class="m">at start</text>
+          <line x1="680" y1="300" x2="572" y2="300" class="wire-dash" marker-end="url(#a)"/>
+          <text x="626" y="292" text-anchor="middle" class="m">config/&lt;sensor&gt;</text>
+          <text x="626" y="318" text-anchor="middle" class="s">crop thresholds</text>
+
+          <!-- answers path -->
+          <line x1="900" y1="372" x2="822" y2="372" class="wire-ai" marker-end="url(#aa)"/>
+          <text x="861" y="364" text-anchor="middle" class="m">answers</text>
+          <line x1="680" y1="372" x2="572" y2="372" class="wire-ai" marker-end="url(#aa)"/>
+          <text x="626" y="364" text-anchor="middle" class="m">&lt;node&gt;/agent/#</text>
+          <line x1="420" y1="372" x2="360" y2="372" class="wire" marker-end="url(#a)"/>
+          <text x="390" y="392" text-anchor="middle" class="m">shows</text>
+
+          <!-- LED back to nano -->
+          <polyline points="420,196 292,196 292,152" class="wire-dash" marker-end="url(#a)"/>
+          <text x="356" y="214" text-anchor="middle" class="m">led 0 · 1 · 2</text>
+        </svg>
+      </div>
+      <figcaption>Readings go up the top lane; answers come back along the bottom lane. The LED arrow is optional: the <code>led</code> value uses the same numbers as the firmware's LED command, so the ESP32 can forward the network's verdict to the Nano.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Inside the agent network</h2>
+      <p>One run per node, compiled from <code>quars_amaranth_network.json</code> into a LangGraph. Agents inside a department run at the same time. An arrow into a box that has several arrows means it waits for all of them.</p>
+    </div>
+    <figure>
+      <div class="canvas">
+        <svg viewBox="0 0 1200 474" role="img" aria-label="A snapshot fans out in parallel to the Agri-Environment, Soil and Water, and Data and Analytics departments. Their heads consolidate the findings. Crop Science waits for the Environment and Soil reports. The Farm Director waits for all four heads and produces the plan and status sent to the ESP32.">
+          <defs>
+            <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="arrow"/></marker>
+            <marker id="bb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" class="arrow-ai"/></marker>
+          </defs>
+
+          <!-- snapshot -->
+          <rect x="16" y="195" width="132" height="80" rx="8" class="box"/>
+          <text x="82" y="228" text-anchor="middle" class="t">Snapshot</text>
+          <text x="82" y="246" text-anchor="middle" class="s">reading + 60 min</text>
+          <text x="82" y="262" text-anchor="middle" class="s">of history</text>
+
+          <!-- fan-out bus -->
+          <line x1="148" y1="235" x2="174" y2="235" class="wire"/>
+          <line x1="174" y1="80" x2="174" y2="390" class="wire"/>
+          <line x1="174" y1="80" x2="198" y2="80" class="wire" marker-end="url(#b)"/>
+          <line x1="174" y1="220" x2="198" y2="220" class="wire" marker-end="url(#b)"/>
+          <line x1="174" y1="390" x2="198" y2="390" class="wire" marker-end="url(#b)"/>
+          <text x="162" y="180" text-anchor="end" class="m">parallel</text>
+
+          <!-- ENV -->
+          <rect x="200" y="20" width="250" height="120" rx="9" class="zone"/>
+          <text x="214" y="40" class="head">ENV · Agri-Environment</text>
+          <rect x="214" y="52" width="222" height="30" rx="6" class="pill"/>
+          <text x="226" y="72" class="s">Climate · temp, humidity</text>
+          <rect x="214" y="92" width="222" height="30" rx="6" class="pill"/>
+          <text x="226" y="112" class="s">Light &amp; Air Quality</text>
+
+          <!-- SOIL -->
+          <rect x="200" y="160" width="250" height="120" rx="9" class="zone"/>
+          <text x="214" y="180" class="head">SOIL · Soil &amp; Water</text>
+          <rect x="214" y="192" width="222" height="30" rx="6" class="pill"/>
+          <text x="226" y="212" class="s">Irrigation &amp; Water · tank, moisture</text>
+          <rect x="214" y="232" width="222" height="30" rx="6" class="sleep"/>
+          <text x="226" y="252" class="t-sleep">Soil Chemistry · asleep, no pH probe</text>
+
+          <!-- DATA -->
+          <rect x="200" y="300" width="250" height="160" rx="9" class="zone"/>
+          <text x="214" y="320" class="head">DATA · Data &amp; Analytics</text>
+          <rect x="214" y="332" width="222" height="30" rx="6" class="pill"/>
+          <text x="226" y="352" class="s">Trend</text>
+          <rect x="214" y="372" width="222" height="30" rx="6" class="pill"/>
+          <text x="226" y="392" class="s">Anomaly</text>
+          <rect x="214" y="412" width="222" height="30" rx="6" class="pill"/>
+          <text x="226" y="432" class="s">Forecast · next 6 h</text>
+
+          <!-- heads -->
+          <line x1="450" y1="80" x2="488" y2="80" class="wire" marker-end="url(#b)"/>
+          <line x1="450" y1="220" x2="488" y2="220" class="wire" marker-end="url(#b)"/>
+          <line x1="450" y1="380" x2="488" y2="380" class="wire" marker-end="url(#b)"/>
+          <rect x="490" y="60" width="120" height="40" rx="7" class="ai-soft"/>
+          <text x="550" y="85" text-anchor="middle" class="t">ENV head</text>
+          <rect x="490" y="200" width="120" height="40" rx="7" class="ai-soft"/>
+          <text x="550" y="225" text-anchor="middle" class="t">SOIL head</text>
+          <rect x="490" y="360" width="120" height="40" rx="7" class="ai-soft"/>
+          <text x="550" y="385" text-anchor="middle" class="t">DATA head</text>
+
+          <!-- ENV + SOIL bus -->
+          <line x1="610" y1="80" x2="640" y2="80" class="wire"/>
+          <line x1="610" y1="220" x2="640" y2="220" class="wire"/>
+          <line x1="640" y1="24" x2="640" y2="220" class="wire"/>
+          <line x1="640" y1="160" x2="668" y2="160" class="wire" marker-end="url(#b)"/>
+          <text x="634" y="152" text-anchor="end" class="m">reports</text>
+
+          <!-- CROP -->
+          <rect x="670" y="60" width="230" height="200" rx="9" class="zone"/>
+          <text x="684" y="80" class="head">CROP · Crop Science</text>
+          <rect x="684" y="92" width="202" height="30" rx="6" class="pill"/>
+          <text x="696" y="112" class="s">Crop Physiology</text>
+          <rect x="684" y="132" width="202" height="30" rx="6" class="pill"/>
+          <text x="696" y="152" class="s">Leaf Quality &amp; Pigment</text>
+          <rect x="684" y="172" width="202" height="30" rx="6" class="pill"/>
+          <text x="696" y="192" class="s">Plant Health · pests</text>
+          <rect x="684" y="212" width="202" height="30" rx="6" class="ai-dash"/>
+          <text x="696" y="232" class="t-ai">AI Diagnosis · farm-qwen</text>
+          <text x="684" y="278" class="s">farm-qwen is advisory only</text>
+
+          <line x1="900" y1="160" x2="913" y2="160" class="wire" marker-end="url(#b)"/>
+          <rect x="915" y="140" width="100" height="40" rx="7" class="ai-soft"/>
+          <text x="965" y="165" text-anchor="middle" class="t">CROP head</text>
+
+          <!-- director bus -->
+          <line x1="640" y1="24" x2="1040" y2="24" class="wire"/>
+          <line x1="1015" y1="160" x2="1040" y2="160" class="wire"/>
+          <line x1="610" y1="380" x2="1040" y2="380" class="wire"/>
+          <line x1="1040" y1="24" x2="1040" y2="380" class="wire"/>
+          <line x1="1040" y1="235" x2="1058" y2="235" class="wire" marker-end="url(#b)"/>
+          <text x="1034" y="300" text-anchor="end" class="m">waits for</text>
+          <text x="1034" y="315" text-anchor="end" class="m">all 4 heads</text>
+
+          <!-- director -->
+          <rect x="1060" y="200" width="124" height="70" rx="8" class="ai"/>
+          <text x="1122" y="231" text-anchor="middle" class="t-on">Farm Director</text>
+          <text x="1122" y="249" text-anchor="middle" class="s-on">ranks the plan</text>
+          <line x1="1122" y1="270" x2="1122" y2="338" class="wire-ai" marker-end="url(#bb)"/>
+          <rect x="1060" y="340" width="124" height="80" rx="8" class="ai-soft"/>
+          <text x="1122" y="366" text-anchor="middle" class="t">To the ESP32</text>
+          <text x="1122" y="384" text-anchor="middle" class="s">status colour</text>
+          <text x="1122" y="400" text-anchor="middle" class="s">top 5 actions</text>
+        </svg>
+      </div>
+      <figcaption>Crop Science is the only department that waits for other departments: it needs the Environment and Soil reports to judge plant stress. Soil Chemistry is asleep because the EZFarm nodes have no pH or nutrient probe. It wakes up automatically if one is added.</figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>How often each part runs</h2>
+    </div>
+    <div class="cadence">
+      <div class="tick">
+        <div class="when">10 s</div>
+        <div class="who">Nano → ESP32</div>
+        <p>Each node sends all six readings over RF. The gateway checks its own ranges, sets the LEDs and publishes the readings to MQTT.</p>
+      </div>
+      <div class="tick">
+        <div class="when">60 s</div>
+        <div class="who">Rule-checked run</div>
+        <p>The bridge averages the last minute for each node and runs all 16 agents. Status, departments and actions are refreshed in milliseconds.</p>
+      </div>
+      <div class="tick ai-tick">
+        <div class="when">06:00 · 18:00</div>
+        <div class="who">Briefing (or on request)</div>
+        <p>Adds the Market &amp; Strategy department (Qatar prices, crop fit by season, profitability, web research). The Director writes "Today" and "Opportunity". Questions are answered any time.</p>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>What the ESP32 receives</h2>
+      <p>All retained, so the ESP32 gets the latest answer the moment it connects. Full payloads and an Arduino snippet are in <code>ESP32_INTEGRATION.md</code>.</p>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Topic</th><th>Carries</th><th>Size</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">&lt;node&gt;/agent/status</td><td>Overall colour, <code>led</code> 0/1/2, number of actions, one-line headline</td><td class="size">≤ 200 B</td></tr>
+          <tr><td class="mono">&lt;node&gt;/agent/departments</td><td>Colour per department: ENV, SOIL, CROP, DATA</td><td class="size">≤ 80 B</td></tr>
+          <tr><td class="mono">&lt;node&gt;/agent/action/1…5</td><td>Ranked actions: <code>cmd</code> code such as <code>REFILL_TANK</code>, what to do, and why. Empty means the slot was cleared</td><td class="size">≤ 200 B</td></tr>
+          <tr><td class="mono">&lt;node&gt;/agent/brief</td><td>The Director's briefing: Today and Opportunity</td><td class="size">≤ 700 B</td></tr>
+          <tr><td class="mono">&lt;node&gt;/agent/insight/1…3</td><td>Crop, rotation, price and diversification suggestions</td><td class="size">≤ 240 B</td></tr>
+          <tr><td class="mono">agent/ask → agent/answer</td><td>The farmer's question in, the assistant's answer out</td><td class="size">≤ 900 B</td></tr>
+          <tr><td class="mono">config/&lt;sensor&gt;</td><td>Amaranth thresholds in raw units. The gateway already applies these</td><td class="size">≤ 45 B</td></tr>
+          <tr><td class="mono">agent/online</td><td><code>1</code> while the laptop side is running, <code>0</code> when it stops</td><td class="size">1 B</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <h2>Who decides what</h2>
+    </div>
+    <div class="rules">
+      <div class="rule">
+        <strong>Rules decide</strong>
+        <p>Status colours, LEDs and commands come only from checking readings against the team's <em>A. cruentus</em> ranges. Outside the ideal band is a warning. Outside the tolerated band is critical.</p>
+      </div>
+      <div class="rule ai-rule">
+        <strong>Models explain</strong>
+        <p>LLMs write briefings from facts the rules have already checked, and only mention sensors that are installed. The farm-qwen diagnosis is shown as advice and never switches anything.</p>
+      </div>
+    </div>
+  </section>
+</div>
+</body>
+</html>

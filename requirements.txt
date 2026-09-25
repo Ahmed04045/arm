@@ -1,0 +1,5 @@
+streamlit>=1.40
+langgraph>=0.2
+ollama>=0.3
+pandas>=2.0
+paho-mqtt>=2.0
