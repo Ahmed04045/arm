@@ -1,6 +1,6 @@
 """SQLite database on the farm computer (Hydro Monitor plan 2.3-2.5, 3.4).
 
-    log        one row per reading or actuator switch, in the plan's log format (2.4)
+    log        one row per reading or actuator switch, in the plan's log format (2.4), tagged with the farm
     plans      every agent plan, versioned: the ranges file the master downloads, plus the reports behind it
     runs       every agent run, including failed ones (a failed run never changes the ranges)
     approvals  the farmer's Approve / Correct decisions: the future fine-tuning data (3.5)
@@ -26,7 +26,7 @@ _lock = threading.Lock()
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS log (
     id INTEGER PRIMARY KEY, field_id TEXT, module_id TEXT, device_id TEXT, type TEXT, kind TEXT,
-    value TEXT, unit TEXT, timestamp TEXT, ts REAL, received_at TEXT);
+    value TEXT, unit TEXT, timestamp TEXT, ts REAL, received_at TEXT, farm_id TEXT);
 CREATE INDEX IF NOT EXISTS log_field_ts ON log(field_id, ts);
 CREATE TABLE IF NOT EXISTS plans (
     version INTEGER PRIMARY KEY, farm_id TEXT, created_at TEXT, valid_from TEXT, ranges TEXT,
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS runs (
     status TEXT, error TEXT, version INTEGER, detail TEXT);
 CREATE TABLE IF NOT EXISTS approvals (
     id INTEGER PRIMARY KEY, version INTEGER, item TEXT, decision TEXT, correction TEXT, created_at TEXT);
-CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, field_id TEXT, text TEXT, created_at TEXT);
+CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, field_id TEXT, text TEXT, created_at TEXT, farm_id TEXT);
 """
 
 
@@ -47,6 +47,10 @@ def connect(path: Path | None = None) -> sqlite3.Connection:
     con = sqlite3.connect(path, timeout=30, check_same_thread=False)
     con.row_factory = sqlite3.Row
     con.executescript(SCHEMA)
+    for table in ("log", "notes"):          # databases made before farms were tagged
+        if "farm_id" not in [r[1] for r in con.execute(f"PRAGMA table_info({table})")]:
+            con.execute(f"ALTER TABLE {table} ADD COLUMN farm_id TEXT")
+    con.execute("CREATE INDEX IF NOT EXISTS log_farm_ts ON log(farm_id, ts)")
     return con
 
 
@@ -73,23 +77,29 @@ def parse_rows(body: str | list | dict) -> list[dict[str, Any]]:
     return out
 
 
-def insert_rows(con: sqlite3.Connection, rows: Iterable[dict[str, Any]]) -> int:
+def insert_rows(con: sqlite3.Connection, rows: Iterable[dict[str, Any]], farm_id: str | None = None) -> int:
+    """farm_id: the farm the master belongs to (the server stamps the active farm; the master doesn't send it)."""
     now = _now()
-    data = [(*[r[c] for c in LOG_COLUMNS], datetime.fromisoformat(r["timestamp"]).timestamp(), now) for r in rows]
+    data = [(*[r[c] for c in LOG_COLUMNS], datetime.fromisoformat(r["timestamp"]).timestamp(), now, farm_id) for r in rows]
     with _lock, con:
-        con.executemany(f"INSERT INTO log ({','.join(LOG_COLUMNS)}, ts, received_at) VALUES ({','.join('?' * 10)})", data)
+        con.executemany(f"INSERT INTO log ({','.join(LOG_COLUMNS)}, ts, received_at, farm_id) VALUES ({','.join('?' * 11)})", data)
     return len(data)
 
 
-def read_log(con: sqlite3.Connection, since_ts: float, field_id: str | None = None) -> list[dict[str, Any]]:
+def read_log(con: sqlite3.Connection, since_ts: float, field_id: str | None = None,
+             farm_id: str | None = None) -> list[dict[str, Any]]:
     sql, args = "SELECT * FROM log WHERE ts >= ?", [since_ts]
     if field_id:
         sql, args = sql + " AND field_id = ?", args + [field_id]
+    if farm_id:
+        sql, args = sql + " AND farm_id = ?", args + [farm_id]
     return [dict(r) for r in con.execute(sql + " ORDER BY ts", args)]
 
 
-def latest_rows(con: sqlite3.Connection, limit: int = 30) -> list[dict[str, Any]]:
-    return [dict(r) for r in con.execute(f"SELECT {','.join(LOG_COLUMNS)} FROM log ORDER BY ts DESC, id DESC LIMIT ?", (limit,))]
+def latest_rows(con: sqlite3.Connection, limit: int = 30, farm_id: str | None = None) -> list[dict[str, Any]]:
+    where, args = ("WHERE farm_id = ?", [farm_id]) if farm_id else ("", [])
+    return [dict(r) for r in con.execute(f"SELECT {','.join(LOG_COLUMNS)} FROM log {where} ORDER BY ts DESC, id DESC LIMIT ?",
+                                         [*args, limit])]
 
 
 # ── plans (versioned ranges) ─────────────────────────────────────────────
@@ -163,13 +173,17 @@ def approvals(con: sqlite3.Connection, version: int) -> dict[str, dict[str, Any]
     return out
 
 
-def add_note(con: sqlite3.Connection, field_id: str, text: str) -> None:
+def add_note(con: sqlite3.Connection, field_id: str, text: str, farm_id: str | None = None) -> None:
     with _lock, con:
-        con.execute("INSERT INTO notes (field_id, text, created_at) VALUES (?,?,?)", (field_id, text, _now()))
+        con.execute("INSERT INTO notes (field_id, text, created_at, farm_id) VALUES (?,?,?,?)", (field_id, text, _now(), farm_id))
 
 
-def notes(con: sqlite3.Connection, field_id: str | None = None, limit: int = 5) -> list[dict[str, Any]]:
-    sql, args = "SELECT * FROM notes", []
+def notes(con: sqlite3.Connection, field_id: str | None = None, limit: int = 5,
+          farm_id: str | None = None) -> list[dict[str, Any]]:
+    clauses, args = [], []
     if field_id:
-        sql, args = sql + " WHERE field_id = ?", [field_id]
-    return [dict(r) for r in con.execute(sql + " ORDER BY id DESC LIMIT ?", args + [limit])]
+        clauses, args = clauses + ["field_id = ?"], args + [field_id]
+    if farm_id:
+        clauses, args = clauses + ["farm_id = ?"], args + [farm_id]
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    return [dict(r) for r in con.execute("SELECT * FROM notes" + where + " ORDER BY id DESC LIMIT ?", args + [limit])]

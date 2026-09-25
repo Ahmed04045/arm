@@ -66,10 +66,11 @@ Three rules shape the whole design:
 | File | What it does |
 |---|---|
 | `summariser.py` | **Code, no AI.** Reads 48 h of log rows and computes, per field:<br>• now, min, max, average and trend of each reading<br>• pump runs, and how fast the soil dries after 10:00<br>• yesterday's peak, the forecast, the farmer's note<br>• the bed-to-bed comparison<br>It also resamples readings into 5-minute steps for the code tools. |
-| `agents/` | The **code tools**, one skill per specialist. Each counts and checks one thing and returns a finding (status, issues, summary):<br>• `monitors.py`: range checks<br>• `soil.py`: irrigation, fertilizer<br>• `crop_science.py`: physiology, leaf colour, pests and disease<br>• `analytics.py`: trend, anomaly, 6 h projection<br>• `strategy.py`: market price, crop fit, profitability, web research, crop suggestion<br>• `diagnosis.py`: the team's farm-qwen fine-tune, not used on the demo farm<br>`agents/__init__.py` maps skill names to functions (`SKILLS`). |
+| `agents/` | The **code tools**, one skill per specialist, including `finance_check` (Profit & Budget, for the Finance department). Each counts and checks one thing and returns a finding (status, issues, summary):<br>• `monitors.py`: range checks<br>• `soil.py`: irrigation, fertilizer<br>• `crop_science.py`: physiology, leaf colour, pests and disease<br>• `analytics.py`: trend, anomaly, 6 h projection<br>• `strategy.py`: market price, crop fit, profitability, web research, crop suggestion<br>• `diagnosis.py`: the team's farm-qwen fine-tune, not used on the demo farm<br>`agents/__init__.py` maps skill names to functions (`SKILLS`). |
 | `crew.py` | The **CrewAI** layer:<br>• the fixed JSON formats (pydantic models `DepartmentReport`, `DirectorPlan`, `Translation`)<br>• one CrewAI `Agent` per department built from `network.json`<br>• rate-limit fallbacks: `_run_one()` retries a task on the next OpenRouter model after a 429<br>• the Arabic translation, with a script check |
 | `checker.py` | The **code check** (plan 3.4 step 5):<br>• clamps every range into the hard limits<br>• limits how far one plan may move a setting (`MAX_STEP`: e.g. soil moisture ±10 %, pump time ±50 %)<br>• rejects nonsense (min ≥ max, or a band widened to the whole hard-limit span)<br>• returns the flags shown on the dashboard |
 | `crop_advice.py` | **Crop suggestion, code only:** what to plant now and in the coming months, per bed (see section 5) |
+| `farm_plan.py` | **Farm design and finance, code only:**<br>• the layout (zones and buildings)<br>• the best crop combination per zone and season<br>• set-up cost, running costs, sales, profit and payback for each design option<br>• the budget check, with a phase 1 when the budget is short<br>• the site-plan drawing<br>Costs come from `farms/costs.json`. See section 5b. |
 | `onboarding.py` | The **onboarding assistant**: the conversation engine, then the design of the four farm files (see section 4) |
 | `assistant.py` | "Ask the farm": answers the farmer's questions from the latest plan (and a web search for price questions) |
 | `farmer_view.py` | Plain-language views for the farmer board: bed cards, Arabic and English text, month names |
@@ -121,7 +122,11 @@ Lessons from testing that the code relies on:
 
 **The conversation.** `step()` is called once per farmer message.
 - **Code picks the question.**
-  - `missing()` lists the slots still unknown, in order: location → beds (count, size, type) → crop → planting date, or the farmer's goal if the crop is undecided → water → fertilizer → power → internet → problems.
+  - `missing()` lists the slots still unknown, in order: location → **stage** (a working farm, or just land?).
+  - For a working farm: beds (count, size, type) → crop → planting date (or the goal, if the crop is undecided).
+  - For bare land: **land size** → goal. The bed and fertilizer questions are skipped.
+  - Then, for everyone: water → power → internet → **budget** → problems ("worries" for bare land).
+  - Code parses "1 hectare", "100 by 50", "2 dunams", "150k", "150 ألف ريال".
   - The next question comes from the `QUESTIONS` bank: clear, with an example, in English or Arabic depending on how the farmer writes.
   - The model only writes a one-sentence acknowledgement, and structures the answer into the profile. It can never ask about something already known.
 - **Null means "answered: none or don't know".**
@@ -149,6 +154,7 @@ Lessons from testing that the code relies on:
 | Hard limits and starting ranges | `limits_for()`: from the crop file (`knowledge.CROP_FILE`), or general values from the candidate crop's climate profile |
 | Agent network | `network_for()` fills the department `TEMPLATE`:<br>• it keeps the roles the sensors can feed, and drops the rest with a reason (for example "Air quality: open-air beds, no sensor")<br>• it writes each CrewAI definition around the farm's crop, beds and problems<br>• it adds Crop Suggestion + Market as an advice-only extra |
 | Crop suggestions | `crop_advice.suggest()` on the new profile |
+| Farm plan & money | `farm_plan.plan()`: for bare land, its recommended zones become the farm's beds (`fields_from_plan`, one per ≤ 2,000 m², planted with the zone's crop combination). It includes the layout, crop combination, costs, profit, payback, and the budget check. It's saved as `plan.json`. |
 
 The team reviews everything on the page. **Team approves** calls `farm.save_farm()`, which writes `farms/<id>/{profile,hardware,limits,network}.json`, makes it the active farm, and saves version 1 (the starting ranges) in `plans`.
 
@@ -167,11 +173,51 @@ The CrewAI Crop Suggestion / Market department explains these numbers; it doesn'
 
 ---
 
+## 5b. Farm design and finance (`farm_plan.py`)
+
+`plan(profile)` prices three design options on the farm's land:
+
+| Option | Growing area split |
+|---|---|
+| Starter | open field |
+| Balanced | 75 % open field, 25 % shade-net house |
+| Intensive | 60 % open field, 20 % shade-net house, 20 % cooled greenhouse |
+
+For each option:
+- **Growing area:** 70 % of bare land (the rest is paths and buildings), or all the beds of a working farm.
+- **Beds:** one Hydro Monitor sensor set and actuator set per bed of up to 2,000 m².
+- **Best crop combination** per zone and season (cool Oct–Apr, hot May–Sep):
+  - a crop is kept only if its margin is positive (sales minus seed, water and fertilizer);
+  - it's ranked by margin, with thirsty crops penalised when water is limited and official prices trusted more;
+  - shares are 50 / 30 / 20 % (no crop over half a zone, so one bad price can't sink the farm);
+  - where nothing pays (open field in summer), the zone rests and the soil is solarised.
+- **Set-up cost (capex):**
+  - structures (greenhouse, shade house);
+  - drip and bed preparation;
+  - pumps;
+  - a water tank (about 3 days of the busier season);
+  - a well (if there's no water), shed and fence (bare land only);
+  - solar power with a battery (if there's no mains power);
+  - the Hydro Monitor kit.
+- **Running costs (opex):**
+  - seeds, water and fertilizer;
+  - workers (none under 1,000 m²: family labour);
+  - electricity (none with solar);
+  - packing and transport (a share of sales);
+  - maintenance (a share of the set-up cost).
+- **Result:** sales, profit, margin, payback years, and yearly water use.
+
+**The recommended option** is the most profitable one that fits the budget; an option taking over 5 years to pay back loses to a quicker one. If nothing fits the budget, it searches for the largest part of the land a starter design can cover within the budget ("phase 1"). The shed, well and solar are fixed costs, so this is a search rather than a straight scaling. Warnings cover a loss, a payback over 5 years, and a field resting in summer.
+
+For a working farm, `current` prices today's crop on the existing beds, so the Finance department can say what a better combination would add. The onboarding saves bare land's plan as `farms/<id>/plan.json`, with a 3-sentence explanation written by the onboarding model (`story`). Working farms get a fresh plan each time. All numbers are estimates: sales use Qatar Open Data yields and prices, and costs use `farms/costs.json`.
+
+---
+
 ## 6. The dashboard (`app.py`)
 
 | Page | For | Shows |
 |---|---|---|
-| 🌱 **My farm** (default) | The farmer | • bed cards from `farmer_view.bed_cards`: plain status, crop day and harvest, last watering<br>• today's weather<br>• today's advice, with 👍 / ✏️ on the message and ✅ Done / ✏️ Correct on each to-do<br>• "Get fresh advice"<br>• what to plant now and in the coming months<br>• market tips, notes, and a chat<br>• an Arabic / English switch, right-to-left in Arabic<br>The model route is tucked under *AI settings*. |
+| 🌱 **My farm** (default) | The farmer | **Top of the page:** a banner, and key numbers (beds OK, profit per year, next harvest, water).<br>**Today tab:**<br>• bed cards (plain status, crop day and harvest, last watering)<br>• **Your AI farm team:** one card per department with its insight, in Arabic when translated<br>• **the big picture:** the Director's combined overview plus counts and the profit line<br>• to-dos with ✅ Done / ✏️ Correct<br>• "Get fresh advice" (hidden on bare land until sensors send data)<br>**Farm plan & money tab:** site plan drawing, set-up costs, crop-combination calendar, money in and out, design options against the budget.<br>**What to plant tab.** **Notes & questions tab.**<br>A 🏡 Farm selector and an Arabic / English switch sit in the sidebar. |
 | 💬 **Set up a farm** | The farmer and the team | The onboarding chat (with the plan's example lines for rehearsals), then five review tabs: crop suggestions, profile, hardware, hard limits, agent network. Then **Team approves**. |
 | 🛠️ **Developer** | The team and the judges | • live metrics and log rows<br>• the agent-network diagram<br>• Run now with live progress, and the run history<br>• the Director's plan: ranges before, Director and saved, with clamp flags and reasons<br>• every department report, and the summariser's JSON |
 
@@ -179,7 +225,7 @@ The CrewAI Crop Suggestion / Market department explains these numbers; it doesn'
 
 ## 7. The database: `data/hydro.db` (SQLite)
 
-It's created by `db.connect()` (schema in `db.SCHEMA`). Delete the file, or run `python seed_demo.py --reset`, to start over. The `data/` folder is in `.gitignore`.
+It's created by `db.connect()` (schema in `db.SCHEMA`; older files get the `farm_id` columns added automatically). `python seed_demo.py --reset` empties every table (it works even while `server.py` or the dashboard has the file open) and reseeds Al Khor. The `data/` folder is in `.gitignore`.
 
 ### `log`: every reading and every actuator switch (plan 2.4)
 
@@ -188,6 +234,7 @@ One row per reading or per pump switch, sent by the master with `POST /log`.
 | Column | Type | Meaning | Example |
 |---|---|---|---|
 | `id` | INTEGER PK | Row number | `25955` |
+| `farm_id` | TEXT | Which farm the row belongs to. The master doesn't send it: `server.py` stamps the active farm. Every read filters by it, so two farms' F1 beds never mix. | `alkhor` |
 | `field_id` | TEXT | Which field (bed) in the farm | `F1` |
 | `module_id` | TEXT | Which sensor set or actuator set | `S1` (sensors), `A1` (actuators) |
 | `device_id` | TEXT | Which sensor or relay on that module | `dht11`, `soil`, `light`, `level`, `mq135`, `relay1` |
@@ -218,9 +265,9 @@ One row per saved plan. The **latest version** is what `GET /ranges` serves. Ver
 | `message_ar` | TEXT | The same in Arabic, or NULL if no clean translation came back |
 | `todos` | JSON | To-dos for the farmer, most urgent first: `["Put the shade cloth over the beds from 11:00 to 15:00", …]` |
 | `todos_ar` | JSON | The to-dos in Arabic, in the same order |
-| `reports` | JSON | Every department report: `{"agri_environment": {"summary", "warnings", "todos", "ranges", "pump_seconds", "by", "name", "code", "status", "advice_only"}, …, "_changes": [the Director's changes with reasons]}` |
+| `reports` | JSON | Every department report: `{"agri_environment": {"summary", "summary_ar", "warnings", "todos", "ranges", "pump_seconds", "by", "name", "code", "status", "advice_only"}, …, "_changes": [the Director's changes with reasons]}`. `summary_ar` is the Arabic insight for the farmer board. |
 | `summaries` | JSON | The summariser's per-field numbers the departments read (now/min/max/avg/trend, yesterday, pump runs, forecast, farmer note) |
-| `advice` | JSON | `{"market": [market tips from the Profitability tool], "crops": crop_advice.suggest(...)}`. Plans saved before crop advice existed hold a plain list of market tips. |
+| `advice` | JSON | `{"market": [market tips], "crops": crop_advice.suggest(...), "farm_plan": farm_plan.plan(...)}`. Plans saved before crop advice existed hold a plain list of market tips. |
 | `made_by` | TEXT | The model that wrote the plan, e.g. `openrouter:qwen/qwen3.8-27b:free`, or `onboarding (starting ranges)` |
 | `trigger` | TEXT | `schedule`, `button`, `cli` or `onboarding` |
 
@@ -258,6 +305,7 @@ The dashboard shows the latest decision per item (`db.approvals()`). Over time, 
 |---|---|---|
 | `id` | INTEGER PK | |
 | `field_id` | TEXT | Which bed |
+| `farm_id` | TEXT | Which farm |
 | `text` | TEXT | E.g. `leaves on the west edge look pale` |
 | `created_at` | TEXT | When |
 
@@ -291,6 +339,7 @@ Also in `data/` is `master_sd_ranges.json`, the fake master's "SD card". The for
 | `farms/active.json` | Which farm the system runs |
 | `farms/<id>/*.json` | The four onboarding outputs (see section 4). `network.json` is the CrewAI definitions: edit a department's `agent.backstory`, its `llm`, or its specialists there. |
 | `farms/market_prices.json` | Crop prices in QR/kg, with source and confidence. **Put the farmer's real buyer prices here** (confidence `farmer`). |
+| `farms/costs.json` | Set-up and running cost assumptions for farm design and finance (greenhouse per m², drip, tank, well, solar, workers, water, electricity…). **Replace them with local supplier quotes.** |
 | `knowledge.py` | The crop file: ranges, pest rules, growth stages, hard limits, and the candidate crops for crop suggestion |
 
 ---

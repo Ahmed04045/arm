@@ -25,7 +25,6 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime
 
 from farm import ROOT, field_kinds, load_farm, local_now
 from knowledge import KIND_DEVICE, KIND_UNIT

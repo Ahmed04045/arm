@@ -59,6 +59,29 @@ T = {   # UI text: key -> (English, Arabic)
     "official": ("official Qatar price", "سعر رسمي في قطر"), "estimate": ("estimated price", "سعر تقديري"),
     "proxy": ("rough price guess", "سعر تقريبي"), "farmer": ("your price", "سعرك"),
     "market": ("Market tips", "نصائح السوق"),
+    "team": ("Your AI farm team", "فريقك الذكي للمزرعة"),
+    "big_picture": ("The big picture", "الصورة الكاملة"),
+    "advice_only": ("advice", "نصيحة"),
+    "n_warnings": ("warnings", "تنبيهات"), "n_changes": ("setting changes", "تعديلات"), "n_checked": ("checked by code", "راجعها النظام"),
+    "n_todos": ("to-dos", "مهام"),
+    "profit_year": ("Profit / year", "الربح السنوي"), "setup": ("Set-up cost", "تكلفة الإنشاء"), "payback": ("Pays back in", "يسترد خلال"),
+    "years": ("years", "سنوات"), "sales": ("Sales", "المبيعات"), "per_year": ("per year", "سنوياً"), "of_sales": ("of sales", "من المبيعات"),
+    "budget": ("budget", "الميزانية"), "no_budget": ("no budget given", "لم تُحدد ميزانية"),
+    "site": ("Site plan", "مخطط المزرعة"), "setup_items": ("Where the set-up money goes", "أين تذهب تكلفة الإنشاء"),
+    "combo": ("Best crop combination through the year", "أفضل مزيج محاصيل على مدار السنة"),
+    "combo_note": ("Only crops that make money are kept, and no zone puts more than half its area into one crop.",
+                   "نحتفظ فقط بالمحاصيل الرابحة، ولا يُخصَّص أكثر من نصف أي منطقة لمحصول واحد."),
+    "money": ("Money in, money out (per year)", "الدخل والمصاريف (سنوياً)"),
+    "options": ("Design options", "خيارات التصميم"), "option": ("Option", "الخيار"), "fits_budget": ("Fits budget", "ضمن الميزانية"),
+    "today_crop": ("Today's crop only", "المحصول الحالي فقط"), "best_mix": ("best crop combination", "أفضل مزيج"),
+    "tab_today": ("Today", "اليوم"), "tab_plan": ("Farm plan & money", "خطة المزرعة والمال"), "tab_talk": ("Notes & questions", "ملاحظات وأسئلة"),
+    "kpi_beds": ("Beds doing well", "أحواض بحالة جيدة"), "kpi_beds_sub": ("right now", "الآن"),
+    "kpi_harvest": ("Next harvest", "الحصاد القادم"), "kpi_water": ("Water", "الماء"),
+    "estimate_word": ("estimate, after costs", "تقدير بعد التكاليف"),
+    "planned_bed": ("Planned: ready to build", "مخطط: جاهز للإنشاء"),
+    "stage_land": ("new farm plan", "خطة مزرعة جديدة"), "stage_farm": ("working farm", "مزرعة قائمة"),
+    "land_note": ("This farm is still land: follow the farm plan tab to build it. Daily advice starts when the sensors are installed.",
+                  "هذه المزرعة ما زالت أرضاً: اتبع تبويب خطة المزرعة لإنشائها. تبدأ النصائح اليومية عند تركيب الحساسات."),
 }
 
 
@@ -86,8 +109,8 @@ def crop_label(name: str | None, ar: bool) -> str:
     return crop.get("ar", crop["name"]) if ar else crop["name"]
 
 
-def _latest(con, field_id: str, since_s: int = 6 * 3600) -> dict[str, float]:
-    rows = db.read_log(con, time.time() - since_s, field_id)
+def _latest(con, field_id: str, since_s: int = 6 * 3600, farm_id: str | None = None) -> dict[str, float]:
+    rows = db.read_log(con, time.time() - since_s, field_id, farm_id)
     out: dict[str, float] = {}
     for r in rows:
         if r["type"] == "reading":
@@ -98,8 +121,9 @@ def _latest(con, field_id: str, since_s: int = 6 * 3600) -> dict[str, float]:
     return out
 
 
-def _last_watered(con, field_id: str) -> float | None:
-    rows = [r for r in db.read_log(con, time.time() - 86400, field_id) if r["type"] == "action" and r["value"] == "activated"]
+def _last_watered(con, field_id: str, farm_id: str | None = None) -> float | None:
+    rows = [r for r in db.read_log(con, time.time() - 86400, field_id, farm_id)
+            if r["type"] == "action" and r["value"] == "activated"]
     return rows[-1]["ts"] if rows else None
 
 
@@ -108,11 +132,11 @@ def bed_cards(con, farm: dict[str, Any], plan: dict[str, Any] | None, ar: bool) 
     ranges = {f: v for f, v in (plan or {}).get("ranges", {}).items() if isinstance(v, dict)} or farm["limits"]["start"]
     cards = []
     kinds = field_kinds(farm["hardware"])
-    tank = next((_latest(con, f).get("level") for f in kinds if "level" in kinds[f]), None)
+    tank = next((_latest(con, f, farm_id=farm["id"]).get("level") for f in kinds if "level" in kinds[f]), None)
     tank_min = next((r.get("level", [20])[0] for r in ranges.values() if r.get("level")), 20)
     for field_id in kinds:
         info = field_info(farm, field_id)
-        now = _latest(con, field_id)
+        now = _latest(con, field_id, farm_id=farm["id"])
         r = ranges.get(field_id, {})
         level, lines = "ok", []
         soil = now.get("soil_moisture")
@@ -138,7 +162,7 @@ def bed_cards(con, farm: dict[str, Any], plan: dict[str, Any] | None, ar: bool) 
             lines.append(f"Tank low ({tank:.0f} %): refill soon" if not ar else f"الخزان منخفض ({tank:.0f}٪): املأه قريباً")
         if not now:
             level, lines = "none", [t("no_data", ar)]
-        watered = _last_watered(con, field_id)
+        watered = _last_watered(con, field_id, farm["id"])
         if watered:
             mins = int((time.time() - watered) / 60)
             ago = t("ago_min", ar, n=mins) if mins < 90 else t("ago_h", ar, n=round(mins / 60))
@@ -158,7 +182,7 @@ def bed_cards(con, farm: dict[str, Any], plan: dict[str, Any] | None, ar: bool) 
 
 
 def updated_at(con, farm: dict[str, Any]) -> str | None:
-    row = con.execute("SELECT MAX(ts) FROM log").fetchone()[0]
+    row = con.execute("SELECT MAX(ts) FROM log WHERE farm_id = ?", (farm["id"],)).fetchone()[0]
     return datetime.fromtimestamp(row, tz_of(farm)).strftime("%H:%M") if row else None
 
 

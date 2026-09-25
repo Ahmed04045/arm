@@ -49,9 +49,12 @@ def main() -> None:
     parser.add_argument("--hours", type=int, default=48)
     parser.add_argument("--farm", default=None)
     args = parser.parse_args()
-    if args.reset and db.DB_PATH.exists():
-        db.DB_PATH.unlink()
     con = db.connect()
+    if args.reset:   # empty every table (works even while server.py or the dashboard has the file open)
+        with con:
+            for table in ("log", "plans", "runs", "approvals", "notes"):
+                con.execute(f"DELETE FROM {table}")
+        con.execute("VACUUM")
     farm = load_farm(args.farm)
     kinds = field_kinds(farm["hardware"])
     modules = {f["field_id"]: (f["sensor_set"]["module_id"], f["actuator_set"]["module_id"]) for f in farm["hardware"]["fields"]}
@@ -97,13 +100,13 @@ def main() -> None:
                     KIND_UNIT[kind], t)
         t += timedelta(seconds=STEP_S)
 
-    n = db.insert_rows(con, rows)
+    n = db.insert_rows(con, rows, farm["id"])
     if not db.latest_plan(con, farm["id"]):
         db.save_plan(con, farm["id"], (now - timedelta(hours=args.hours)).isoformat(timespec="seconds"), start,
                      made_by="onboarding (starting ranges)", trigger="onboarding",
                      message_en="Starting ranges from onboarding.", todos=[], flags=[])
-    if not db.notes(con, "F1"):
-        db.add_note(con, "F1", "leaves on the west edge look pale")
+    if not db.notes(con, "F1", farm_id=farm["id"]):
+        db.add_note(con, "F1", "leaves on the west edge look pale", farm["id"])
     print(f"Seeded {n} rows for {', '.join(modules)} ({args.hours} h ending {now:%Y-%m-%d %H:%M}), "
           f"tank now {tank:.0f} %, plan version {db.latest_plan(con, farm['id'])['version']}.")
 

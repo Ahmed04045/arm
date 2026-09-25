@@ -318,3 +318,26 @@ def crop_suggest(agent: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]
 
     advice = crop_advice.suggest({"profile": state["farm"]["profile"]})
     return done({"status": "OK", "summary": crop_advice.summary_text(advice), "issues": [], "crops": advice})
+
+
+def finance_check(agent: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """Profit & Budget: sales, running costs, set-up cost, payback and the budget for the recommended design and the
+    best crop combination (farm_plan.py). Flags anything that doesn't pay."""
+    import farm_plan
+
+    result = farm_plan.plan(state["farm"]["profile"])
+    best = result["recommended"]
+    issues = []
+    if best["profit"] <= 0:
+        issues.append({"kind": "risk", "field": "profit", "direction": "low", "severity": "CRITICAL",
+                       "message": f"The recommended design loses about {abs(best['profit']):,} QR a year on these assumptions"})
+    elif best["payback_years"] and best["payback_years"] > 5:
+        issues.append({"kind": "risk", "field": "payback", "direction": "high", "severity": "WARNING",
+                       "message": f"Set-up cost takes about {best['payback_years']} years to earn back"})
+    current = result.get("current")
+    if current and current["profit"] < result["options"]["starter"]["profit"]:
+        gain = result["options"]["starter"]["profit"] - current["profit"]
+        issues.append({"kind": "risk", "field": "crop_mix", "direction": "low", "severity": "WARNING",
+                       "message": f"A better crop combination on the same beds could add about {gain:,} QR a year"})
+    status = "CRITICAL" if any(i["severity"] == "CRITICAL" for i in issues) else "WARNING" if issues else "OK"
+    return done({"status": status, "summary": farm_plan.summary_text(result), "issues": issues, "farm_plan": result})

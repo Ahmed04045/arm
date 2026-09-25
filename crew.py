@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import time
 from typing import Any
 
@@ -24,6 +25,7 @@ import llm
 os.environ.setdefault("CREWAI_TELEMETRY_OPT_OUT", "true")   # nothing leaves the laptop except model calls
 os.environ.setdefault("OTEL_SDK_DISABLED", "true")
 OLLAMA_URL = os.environ.get("OLLAMA_HOST", "http://localhost:11434").rstrip("/")
+CLOUD_TIMEOUT_S = 90
 
 from crewai import LLM, Agent, Crew, Process, Task   # noqa: E402  (after the telemetry switches)
 
@@ -71,6 +73,7 @@ class DirectorPlan(BaseModel):
 class Translation(BaseModel):
     message_ar: str
     todos_ar: list[str]
+    extras_ar: list[str] = Field(default_factory=list, description="the department insights in Arabic, same order")
 
 
 REPORT_RULES = (
@@ -88,11 +91,15 @@ def crew_llm(model: str, temperature: float = 0.2):
     key = os.environ.get(cfg["key_env"] or "", "ollama")
     extra = {}
     if provider == "openrouter":
-        # free OpenRouter models are often reasoning models: without this they can spend the whole token budget
-        # thinking and never write the JSON (LengthFinishReasonError)
-        extra["extra_body"] = {"reasoning": {"effort": "low"}}
+        # 1. free OpenRouter models are often reasoning models: without a low effort they can spend the whole token
+        #    budget thinking and never write the JSON (LengthFinishReasonError)
+        # 2. "models": OpenRouter itself fails over to the next free model inside the same request when one is
+        #    rate-limited upstream (429) or overloaded (503), exactly like llm.py does for plain calls
+        backups = [m for m in llm.OPENROUTER_FALLBACKS if m != name]
+        extra["extra_body"] = {"reasoning": {"effort": "low"}, "models": [name, *backups][:3]}
+    # timeout: a free model stuck in a queue should fail fast so the next candidate (or local Ollama) takes over
     return LLM(model=f"openai/{name}", base_url=cfg["base_url"], api_key=key, temperature=temperature,
-               max_tokens=llm.CLOUD_MAX_TOKENS, **extra)
+               max_tokens=llm.CLOUD_MAX_TOKENS, timeout=CLOUD_TIMEOUT_S, max_retries=1, **extra)
 
 
 def _agent(definition: dict[str, Any], model: str, temperature: float = 0.2) -> Agent:
@@ -105,7 +112,8 @@ def _safe(text: str) -> str:
 
 
 RETRYABLE = ("429", "rate limit", "ratelimit", "502", "503", "504", "overloaded", "temporarily", "timeout",
-             "length limit", "lengthfinishreason")   # a model that ran out of tokens: try the next one
+             "length limit", "lengthfinishreason",     # a model that ran out of tokens: try the next one
+             "upstream error", "no choices", "connection")
 
 
 def _kickoff(tasks: list[Task]) -> str | None:
@@ -118,11 +126,18 @@ def _kickoff(tasks: list[Task]) -> str | None:
 
 
 def _candidates(model: str) -> list[str]:
-    """The model, then (for OpenRouter) the configured open-weight fallbacks, like llm.py does for plain calls."""
-    provider, name = llm.split(model)
-    if provider != "openrouter":
+    """What to try, in order: the model (OpenRouter already fails over between its free models inside each
+    request), the model once more after a pause (free pools recover in seconds), then a local Ollama model if one
+    is installed, so a demo never dies because every free cloud model is busy."""
+    provider, _ = llm.split(model)
+    if provider == "ollama":
         return [model]
-    return [model] + [f"openrouter:{m}" for m in llm.OPENROUTER_FALLBACKS if m != name][:2]
+    out = [model, model]
+    local = llm.available_models()
+    best = next((m for m in ("qwen2.5:7b", "qwen2.5:3b") if m in local), local[0] if local else None)
+    if best:
+        out.append(best)
+    return out
 
 
 def _run_one(make_task, model: str) -> tuple[Task | None, str | None]:
@@ -138,8 +153,8 @@ def _run_one(make_task, model: str) -> tuple[Task | None, str | None]:
             return task, None
         if not error or not any(k in error.lower() for k in RETRYABLE):
             return task, error or "no output"
-        wait = 4 * (attempt + 1)
-        log.warning("%s: %s; trying the next model in %ss", candidate, error[:80], wait)
+        wait = 8 * (attempt + 1)
+        log.warning("%s busy (%s); trying again in %ss", candidate, error[:60], wait)
         time.sleep(wait)
     return None, error
 
@@ -184,21 +199,31 @@ GLOSSARY = ("shade cloth = شبك التظليل; drip line = خط التنقي�
             "seedlings = الشتلات; pale leaves = أوراق باهتة")
 
 
+ALLOWED_LATIN = {"QR", "kW", "kWh", "NPK", "Hydro", "Monitor", "EC", "pH"}
+
+
 def _clean_arabic(text: str) -> bool:
-    """Small Qwen models sometimes slip Chinese characters into other languages."""
-    return not any("぀" <= ch <= "鿿" or "가" <= ch <= "힯" for ch in text)
+    """Models sometimes slip Chinese characters, or untranslated English words ('سيدeploy'), into the Arabic."""
+    if any("぀" <= ch <= "鿿" or "가" <= ch <= "힯" for ch in text):
+        return False
+    return not [w for w in re.findall(r"[A-Za-z]{3,}", text) if w not in ALLOWED_LATIN]
 
 
-def translate(message: str, todos: list[str], model: str, attempts: int = 2) -> dict[str, Any] | None:
-    """The farmer's message and to-dos in Modern Standard Arabic, or None if no clean translation came back."""
+def translate(message: str, todos: list[str], model: str, extras: list[str] | None = None,
+              attempts: int = 2) -> dict[str, Any] | None:
+    """The farmer's message, to-dos and (optionally) the department insights in Modern Standard Arabic, or None if no
+    clean translation came back."""
     source = "Message: " + message + "\nTo-dos:\n" + "\n".join(f"{i + 1}. {t}" for i, t in enumerate(todos))
+    if extras:
+        source += "\nDepartment insights (translate each; put them in extras_ar in the same order):\n" + "\n".join(
+            f"{i + 1}. {t}" for i, t in enumerate(extras))
     for attempt in range(attempts):
         def make(m: str, attempt=attempt) -> Task:
             return Task(
                 description=_safe("Translate this farm advice into simple Modern Standard Arabic for the farmer. Write Arabic "
                                   "script only. Keep every number, unit, time and field name (F1, F2) exactly as written.\n"
                                   "Use these farming terms: " + GLOSSARY + "\n\n" + source),
-                expected_output="JSON with message_ar and todos_ar (same order as the to-dos).",
+                expected_output="JSON with message_ar, todos_ar (same order as the to-dos) and extras_ar (same order as the insights).",
                 agent=Agent(role="Translator for the farm messages", goal="Faithful, simple Arabic the farmer understands",
                             backstory="You translate farm advice from English into clear Modern Standard Arabic.",
                             llm=crew_llm(m, 0.1 if attempt == 0 else 0.0), allow_delegation=False, max_iter=2, verbose=False),
@@ -206,6 +231,6 @@ def translate(message: str, todos: list[str], model: str, attempts: int = 2) -> 
 
         task, _ = _run_one(make, model)
         out = _parsed(task)
-        if out and _clean_arabic(out["message_ar"] + "".join(out["todos_ar"])):
+        if out and _clean_arabic(out["message_ar"] + "".join(out["todos_ar"]) + "".join(out.get("extras_ar") or [])):
             return out
     return None

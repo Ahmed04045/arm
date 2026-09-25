@@ -9,7 +9,7 @@ from .crop_science import crop_physiology, leaf_quality, plant_health
 from .diagnosis import ai_diagnosis
 from .monitors import range_monitor
 from .soil import fertilizer, irrigation
-from .strategy import crop_fit, crop_suggest, market_watch, profitability, web_research
+from .strategy import crop_fit, crop_suggest, finance_check, market_watch, profitability, web_research
 
 SKILLS: dict[str, Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]] = {
     "range_monitor": range_monitor,
@@ -24,6 +24,7 @@ SKILLS: dict[str, Callable[[dict[str, Any], dict[str, Any]], dict[str, Any]]] = 
     "forecast": forecast,
     "market_watch": market_watch,
     "crop_suggest": crop_suggest,
+    "finance_check": finance_check,
     "crop_fit": crop_fit,
     "profitability": profitability,
     "web_research": web_research,

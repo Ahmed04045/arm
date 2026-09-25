@@ -101,6 +101,8 @@ def load_farm(farm_id: str | None = None) -> dict[str, Any]:
     folder = FARMS / farm_id
     farm = {part: json.loads((folder / f"{part}.json").read_text(encoding="utf-8")) for part in PARTS}
     farm["id"] = farm_id
+    plan_file = folder / "plan.json"          # the onboarding's farm plan (layout, crop combination, finance)
+    farm["plan"] = json.loads(plan_file.read_text(encoding="utf-8")) if plan_file.exists() else None
     farm["network"] = validate_network(farm["network"], farm["hardware"])
     return farm
 
@@ -112,7 +114,13 @@ def save_farm(farm_id: str, parts: dict[str, Any]) -> Path:
     validate_network(parts["network"], parts["hardware"])
     for part in PARTS:
         (folder / f"{part}.json").write_text(json.dumps(parts[part], indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    if parts.get("plan"):
+        (folder / "plan.json").write_text(json.dumps(parts["plan"], indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return folder
+
+
+def list_farms() -> list[str]:
+    return sorted(p.name for p in FARMS.iterdir() if (p / "profile.json").exists())
 
 
 def specialist_count(network: dict[str, Any], extras: bool = False) -> int:

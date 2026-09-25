@@ -29,12 +29,16 @@ from agents.base import resolve_model
 from knowledge import CANDIDATE_CROPS, CROP_FILE
 
 REQUIRED = ["location", "fields", "water", "fertilizer", "power", "internet", "problems"]
-NULLABLE = {"crop", "planted", "water", "fertilizer", "power", "internet", "problems", "goal"}   # may end up null
+NULLABLE = {"crop", "planted", "water", "fertilizer", "power", "internet", "problems", "goal", "land", "budget"}
 MAX_ASKS = 2
 
 QUESTIONS = {   # slot -> (English, Arabic): one clear question each, with an example
     "location": ("Where is your farm? A town or area is enough, for example 'near Al Khor'.",
                  "أين تقع مزرعتك؟ يكفي اسم المدينة أو المنطقة، مثلاً «قرب الخور»."),
+    "stage": ("Is it already a working farm with beds or crops, or is it land you want to start farming on?",
+              "هل هي مزرعة قائمة فيها أحواض أو محاصيل، أم أرض تريد أن تبدأ الزراعة فيها؟"),
+    "land": ("How big is the land? For example '100 by 50 metres', '5,000 square metres' or '1 hectare'.",
+             "ما مساحة الأرض؟ مثلاً «100 في 50 متر» أو «5000 متر مربع» أو «1 هكتار»."),
     "fields": ("How many beds or fields do you have, and roughly how big is each one (for example 10 by 20 metres)? "
                "Are they soil or hydroponic, in the open air or in a greenhouse?",
                "كم عدد الأحواض أو الحقول لديك، وما مساحة كل منها تقريباً (مثلاً 10 × 20 متر)؟ وهل هي تربة أم زراعة مائية، في الهواء الطلق أم في بيت محمي؟"),
@@ -51,8 +55,13 @@ QUESTIONS = {   # slot -> (English, Arabic): one clear question each, with an ex
     "power": ("Is there electricity near the beds, for example in a shed or from solar panels? Say 'none' if not.",
               "هل توجد كهرباء قرب الأحواض، مثلاً في مخزن أو من ألواح شمسية؟ قل «لا» إذا لم توجد."),
     "internet": ("Is there WiFi or mobile data at the farm?", "هل يوجد واي فاي أو بيانات جوال في المزرعة؟"),
+    "budget": ("What budget do you have to set up or improve the farm, in Qatari riyals? A rough number is fine, "
+               "for example '150,000', or say 'not sure'.",
+               "ما الميزانية المتاحة لإنشاء المزرعة أو تطويرها بالريال القطري؟ يكفي رقم تقريبي، مثلاً «150 ألف»، أو قل «لا أعرف»."),
     "problems": ("Last one: what goes wrong most often? For example pale leaves, pests, or not knowing how much to water.",
                  "سؤال أخير: ما المشكلة التي تتكرر أكثر؟ مثلاً اصفرار الأوراق أو الآفات أو عدم معرفة كمية الري."),
+    "worries": ("Last one: what worries you most about starting? For example water, the summer heat, or where to sell.",
+                "سؤال أخير: ما أكثر ما يقلقك في البداية؟ مثلاً الماء أو حرارة الصيف أو أين تبيع."),
 }
 NONE_WORDS = re.compile(
     r"^\s*(no|none|nothing|nope|nah|n/?a|not really|no idea|i don'?t know|don'?t know|dont know|not sure|unknown|skip|"
@@ -65,7 +74,8 @@ SYSTEM = (
     "Return JSON only: {\"ack\": \"one short sentence reacting to what the farmer just said. Be friendly but not "
     "flattering (no 'great choice'): add something useful when you can, e.g. the weather from the tool results or a quick "
     "practical tip; otherwise just 'Got it.'\", \"profile\": {the complete profile}}.\n"
-    "Profile keys: location (text), fields (list of {size_m: [width, length] in metres or null, type, crop, planted}), "
+    "Profile keys: location (text), stage ('farming' for a working farm, 'land' for land not yet farmed), "
+    "fields (list of {size_m: [width, length] in metres or null, type, crop, planted}; empty for bare land), "
     "water, fertilizer, power, internet (short texts), goal (text or null), problems (list of short texts).\n"
     "Rules: keep every value you were given. Put the farmer's answer in the slot the question was about, even if it is "
     "unusual (water 'from the river', power 'solar panels'). Use null when the farmer says none, no, not yet or don't "
@@ -76,8 +86,8 @@ SYSTEM = (
 
 
 def empty_profile() -> dict[str, Any]:
-    return {"location": "", "fields": [], "water": "", "fertilizer": "", "power": "", "internet": "", "problems": [],
-            "_asked": {}}
+    return {"location": "", "stage": "", "fields": [], "water": "", "fertilizer": "", "power": "", "internet": "",
+            "budget_qr": "", "problems": [], "_asked": {}}
 
 
 def _undecided(profile: dict[str, Any]) -> bool:
@@ -89,19 +99,33 @@ def missing(profile: dict[str, Any]) -> list[str]:
     out = []
     if not profile.get("location"):
         out.append("location")
-    fields = [f for f in profile.get("fields") or [] if isinstance(f, dict)]
-    if not fields or any(f.get("size_m") == "" or f.get("type") in ("", None) for f in fields) \
-            or any("size_m" not in f for f in fields):
-        out.append("fields")
-    if fields and any(f.get("crop") == "" for f in fields):
-        out.append("crop")
-    if fields and any(f.get("planted") == "" and f.get("crop") not in ("undecided", None, "") for f in fields):
-        out.append("planted")
-    if _undecided(profile) and profile.get("goal", "") == "":
-        out.append("goal")
+    if profile.get("stage", "") == "":
+        out.append("stage")
+        return out                       # the rest of the questions depend on the answer
+    land = profile.get("stage") == "land"
+    if land:
+        if profile.get("land_m2", "") == "":
+            out.append("land")
+        if profile.get("goal", "") == "":
+            out.append("goal")
+    else:
+        fields = [f for f in profile.get("fields") or [] if isinstance(f, dict)]
+        if not fields or any(f.get("size_m") == "" or f.get("type") in ("", None) for f in fields) \
+                or any("size_m" not in f for f in fields):
+            out.append("fields")
+        if fields and any(f.get("crop") == "" for f in fields):
+            out.append("crop")
+        if fields and any(f.get("planted") == "" and f.get("crop") not in ("undecided", None, "") for f in fields):
+            out.append("planted")
+        if _undecided(profile) and profile.get("goal", "") == "":
+            out.append("goal")
     for key in ("water", "fertilizer", "power", "internet"):
+        if key == "fertilizer" and land:
+            continue                     # nothing is grown yet
         if profile.get(key) == "":
             out.append(key)
+    if profile.get("budget_qr", "") == "":
+        out.append("budget")
     if profile.get("problems") == []:
         out.append("problems")
     return out
@@ -125,6 +149,12 @@ def _set_null(profile: dict[str, Any], slot: str) -> None:
                 f["planted"] = None
     elif slot == "location":
         profile["location"] = profile.get("location") or "Qatar"
+    elif slot == "stage":
+        profile["stage"] = "farming"
+    elif slot == "land":
+        profile["land_m2"] = None       # farm_plan assumes 1,000 m² and says so
+    elif slot == "budget":
+        profile["budget_qr"] = None
     elif slot == "problems":
         profile["problems"] = None
     else:
@@ -142,6 +172,8 @@ def _keep_raw(profile: dict[str, Any], slot: str, text: str) -> None:
         profile["problems"] = [p.strip() for p in re.split(r";|,| and |\n", text) if p.strip()][:5]
     elif slot == "location" and not profile.get("location"):
         profile["location"] = text
+    elif slot == "stage" and profile.get("stage") == "":
+        profile["stage"] = "farming"
 
 
 def _clean_size(size: Any) -> list[float] | None | str:
@@ -166,6 +198,12 @@ def _merge(old: dict[str, Any], new: dict[str, Any] | None, slot: str | None = N
     answering: models like to fill every key they haven't heard about with null, which would skip those questions."""
     out = {k: (list(v) if isinstance(v, list) else v) for k, v in old.items()}
     new = new or {}
+    if out.get("stage", "") == "" and slot == "stage" and new.get("stage") in ("land", "farming"):
+        out["stage"] = new["stage"]
+    for key, slot_name in (("land_m2", "land"), ("budget_qr", "budget")):
+        value = new.get(key)
+        if out.get(key, "") == "" and slot == slot_name and isinstance(value, (int, float)) and value > 0:
+            out[key] = round(float(value))
     for key in ("location", "water", "fertilizer", "power", "internet", "goal"):
         if key in new and key in out and out[key] == "":        # never overwrite an earlier answer
             value = new[key]
@@ -252,11 +290,57 @@ def _crop_name(name: str) -> str:
     return name.lower()
 
 
+LAND_WORDS = ("just land", "only land", "just the land", "empty", "bare", "not farmed", "start farming", "want to start",
+              "new farm", "nothing planted", "no farm", "أرض", "فاضية", "فارغة", "بور", "أبدأ", "ابدأ")
+FARM_WORDS = ("working", "beds", "bed", "growing", "already", "greenhouse", "crops", "planted", "أحواض", "حوض", "أزرع", "مزروعة", "قائمة")
+
+
+def parse_area(text: str) -> float | None:
+    """'100 by 50', '5,000 square metres', '1 hectare', '2 dunams', '3 dunum' -> m²."""
+    t = text.lower().replace(",", "")
+    dims = re.findall(r"(\d+(?:\.\d+)?)\s*(?:m\s*)?(?:by|x|×|\*|في)\s*(\d+(?:\.\d+)?)", t)
+    if dims:
+        return float(dims[0][0]) * float(dims[0][1])
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(hectares?|ha\b|هكتار|dunams?|dunums?|donums?|دونم|acres?|فدان|m2|m²|sq|square|متر)", t)
+    if m:
+        n, unit = float(m.group(1)), m.group(2)
+        factor = 10000 if unit.startswith(("hect", "ha", "هكتار")) else 1000 if unit.startswith(("dun", "don", "دونم")) \
+            else 4047 if unit.startswith("acre") else 4200 if unit.startswith("فدان") else 1
+        return n * factor
+    m = re.search(r"(\d+(?:\.\d+)?)", t)
+    return float(m.group(1)) if m and float(m.group(1)) >= 50 else None
+
+
+def parse_money(text: str) -> float | None:
+    """'150,000', '150k', '150 thousand', '1.2 million', '150 ألف' -> QR."""
+    t = text.lower().replace(",", "")
+    m = re.search(r"(\d+(?:\.\d+)?)\s*(k\b|thousand|ألف|الف|million|mil\b|m\b|مليون)?", t)
+    if not m:
+        return None
+    n, unit = float(m.group(1)), (m.group(2) or "")
+    n *= 1000 if unit in ("k", "thousand", "ألف", "الف") else 1_000_000 if unit in ("million", "mil", "m", "مليون") else 1
+    return n if n >= 100 else None
+
+
 def rule_fill(profile: dict[str, Any], farmer_text: str, slot: str | None) -> dict[str, Any]:
     """Code-side structuring the model may miss: bed count and size, bed type, planting date, 'none' answers."""
     text = farmer_text.lower()
-    if slot and NONE_WORDS.match(farmer_text) and slot in NULLABLE | {"fields", "location"}:
+    if slot and NONE_WORDS.match(farmer_text) and slot in NULLABLE | {"fields", "location", "stage"}:
         _set_null(profile, slot)
+    if slot == "stage" and profile.get("stage") == "":
+        farm_words = any(w in text for w in FARM_WORDS)
+        if any(w in text for w in LAND_WORDS) or (re.search(r"\bland\b|\bplot\b|أرض", text) and not farm_words):
+            profile["stage"] = "land"
+        elif any(w in text for w in FARM_WORDS) or re.search(r"\byes\b|نعم", text):
+            profile["stage"] = "farming"
+    if (slot == "land" or profile.get("stage") == "land") and profile.get("land_m2", "") == "":
+        area = parse_area(farmer_text)
+        if area and (slot == "land" or any(w in text for w in ("hect", "dunam", "square", "m2", "by", "هكتار", "متر"))):
+            profile["land_m2"] = round(area)
+    if profile.get("budget_qr", "") == "" and (slot == "budget" or any(w in text for w in ("qr", "riyal", "ريال", "budget", "ميزانية"))):
+        money = parse_money(farmer_text)
+        if money:
+            profile["budget_qr"] = round(money)
     if slot == "crop" and UNDECIDED.search(farmer_text):
         for f in profile.get("fields") or []:
             if f.get("crop") in ("", None):
@@ -403,7 +487,8 @@ def step(history: list[dict[str, str]], profile: dict[str, Any], model: str) -> 
     else:
         nxt = todo[0]
         asked[nxt] = asked.get(nxt, 0) + 1
-        question = QUESTIONS[nxt][1 if ar else 0]
+        key = "worries" if nxt == "problems" and updated.get("stage") == "land" else nxt
+        question = QUESTIONS[key][1 if ar else 0]
         if asked[nxt] > 1:
             question = ("لم أفهم تماماً: " if ar else "Sorry, I didn't quite get that. ") + question
         reply = (ack + " " if ack else "") + question
@@ -461,7 +546,8 @@ def hardware_plan(profile: dict[str, Any]) -> dict[str, Any]:
         fields.append({"field_id": f["field_id"], "sensor_set": {"module_id": f"S{i + 1}", "devices": devices},
                        "actuator_set": {"module_id": f"A{i + 1}", "devices": actuators}})
     power = (profile.get("power") or "").lower()
-    where = "shed" if "shed" in power else "solar box by the beds" if "solar" in power else "place with power and shade"
+    where = ("new shed" if profile.get("stage") == "land" else "shed" if "shed" in power
+             else "solar box by the beds" if "solar" in power else "place with power and shade")
     notes = f"The master node and the farm computer go in the {where}."
     if not profile.get("power"):
         notes += " There is no mains power, so the master needs a solar panel and battery."
@@ -538,6 +624,21 @@ def _focus_lines(profile: dict[str, Any], model: str | None) -> dict[str, str]:
     return {k: str(v) for k, v in out.items() if isinstance(v, str)}
 
 
+FINANCE_DEPT = {
+    "id": "finance", "code": "FIN", "name": "Finance", "advice_only": True, "depends_on": [], "sets": [],
+    "agent": {"role": "Finance agent for the farm",
+              "goal": "Make sure the farm makes money: check sales against running costs and the set-up cost, flag crops "
+                      "or spending that lose money, and name the one change that would improve profit most",
+              "backstory": "You are a careful farm accountant in Qatar. You work only from the numbers the code gives you "
+                           "(sales, running costs, set-up cost, payback, the budget). You say plainly when something doesn't "
+                           "pay, you never call sales profit, and your advice never changes the irrigation ranges. Reply only "
+                           "in the department JSON format.",
+              "llm": "ollama/qwen2.5:7b", "tools": ["farm_plan", "cost_table", "crop_prices"]},
+    "specialists": [{"id": "finance_check", "name": "Profit & Budget", "skill": "finance_check", "inputs": []}],
+    "left_out": [],
+}
+
+
 def network_for(profile: dict[str, Any], hardware: dict[str, Any], limits: dict[str, Any], model: str | None) -> dict[str, Any]:
     """Fill the department template: keep what the sensors can feed, drop the rest with the reason, write each
     role around the farm's crop and problems (plan 3.2)."""
@@ -581,7 +682,7 @@ def network_for(profile: dict[str, Any], hardware: dict[str, Any], limits: dict[
         "specialists": [{"id": "crop_suggest", "name": "Crop Suggestion", "skill": "crop_suggest", "inputs": []},
                         {"id": "market", "name": "Market Price", "skill": "market_watch", "inputs": []},
                         {"id": "profit", "name": "Profitability", "skill": "profitability", "inputs": []}],
-        "left_out": []}]
+        "left_out": []}, FINANCE_DEPT]
     return {
         "farm_id": None, "designed_by": "onboarding assistant, awaiting team review", "designed_on": date.today().isoformat(),
         "process": "sequential",
@@ -596,21 +697,65 @@ def network_for(profile: dict[str, Any], hardware: dict[str, Any], limits: dict[
                                "llm": "ollama/qwen2.5:7b", "tools": ["department_reports", "ranges_in_force", "hard_limits"]}}}
 
 
+ZONE_TYPE = {"open": "soil bed, open air", "shade": "soil bed, shade house", "greenhouse": "soil bed, greenhouse"}
+
+
+def fields_from_plan(farm_plan_result: dict[str, Any]) -> list[dict[str, Any]]:
+    """Bare land: the recommended design's zones become the farm's fields, each planted with its first cool-season crop."""
+    fields = []
+    for z in farm_plan_result["recommended"]["zones"]:
+        crops = [c for c in z["crops"] if c["crop"] and c["season"] == "cool"] or [c for c in z["crops"] if c["crop"]]
+        bed_area = z["area_m2"] / z["beds"]              # one monitored bed per <= 2,000 m² (farm_plan.BED_M2)
+        width = round(min(50.0, max(10.0, bed_area ** 0.5)), 1)
+        for b in range(z["beds"]):
+            crop = crops[b % len(crops)] if crops else None  # spread the zone's crop combination over its beds
+            fields.append({"field_id": f"F{len(fields) + 1}", "size_m": [width, round(bed_area / width, 1)],
+                           "type": ZONE_TYPE[z["cover"]], "crop": crop["name"].split(" (")[0].lower() if crop else "undecided",
+                           "planted": None, "zone": z["zone"], "status": "planned"})
+    return fields
+
+
+def plan_story(profile: dict[str, Any], farm_plan_result: dict[str, Any], model: str | None) -> str | None:
+    """Three plain sentences explaining the design, the crop combination and the money (the model explains the
+    code's numbers; it doesn't make new ones)."""
+    if not model:
+        return None
+    import farm_plan
+
+    text = llm.chat(model, "You are a friendly farm planning adviser in Qatar. Use only the numbers given. Never call sales profit.",
+                    f"Farm: {json.dumps(public_profile(profile), ensure_ascii=False)}\nPlan (code):\n"
+                    f"{farm_plan.summary_text(farm_plan_result)}\n\nExplain this plan to the farmer in 3 short sentences: "
+                    "what to build, what to grow when, and whether it pays (profit per year and payback). English only.",
+                    temperature=0.3)
+    return text.strip() if text else None
+
+
 def design(profile: dict[str, Any], farm_id: str, model: str | None = None) -> dict[str, Any]:
-    """The four outputs, ready for review."""
+    """The four outputs, plus the farm plan (layout, crop combination, finance) and crop suggestions, for review."""
+    import crop_advice
+    import farm_plan
+
+    profile = dict(profile)
+    profile.setdefault("stage", "farming")
+    plan_result = farm_plan.plan(profile)
+    if profile["stage"] == "land":
+        profile["fields"] = fields_from_plan(plan_result)
     full = {"farm_id": farm_id, "name": f"{(profile.get('place') or profile['location']).split(',')[0]} farm",
             "location": profile.get("place") or profile["location"], "latitude": profile.get("latitude"),
             "longitude": profile.get("longitude"), "utc_offset": profile.get("utc_offset", "+03:00"),
             "crop": next((f["crop"] for f in profile["fields"] if f.get("crop")), "undecided"),
-            **{k: profile.get(k) for k in ("fields", "water", "fertilizer", "power", "internet", "problems", "goal")}}
+            **{k: profile.get(k) for k in ("stage", "land_m2", "budget_qr", "fields", "water", "fertilizer", "power",
+                                           "internet", "problems", "goal")}}
+    for k in ("land_m2", "budget_qr"):
+        if full.get(k) == "":
+            full[k] = None
     hardware = hardware_plan(profile)
     limits = limits_for(profile, hardware)
     network = network_for(profile, hardware, limits, model)
     for part in (hardware, limits, network):
         part["farm_id"] = farm_id
-    import crop_advice
-
-    return {"profile": full, "hardware": hardware, "limits": limits, "network": network,
+    plan_result["story"] = plan_story(profile, plan_result, model)
+    return {"profile": full, "hardware": hardware, "limits": limits, "network": network, "plan": plan_result,
             "crops": crop_advice.suggest({"profile": full})}
 
 
@@ -621,15 +766,28 @@ def proposal_text(parts: dict[str, Any]) -> str:
     pumps = "a small pump on a drip line" + (" and a fan" if any(len(f["actuator_set"]["devices"]) > 1 for f in hw["fields"]) else "")
     left = [f"you don't need {'an' if lo['role'][0].lower() in 'aeiou' else 'a'} {lo['role'].lower()} sensor ({lo['why']})"
             for d in net["departments"] for lo in d["left_out"] if lo["why"].startswith("open-air")]
-    text = (f"Here's what I suggest. {'Each bed' if n > 1 else 'The bed'} gets a sensor set and {pumps}, and the master goes in the "
-            f"{hw['master']['location']}. ")
+    fp = parts.get("plan", {}).get("recommended")
+    land = parts["profile"].get("stage") == "land"
+    text = "Here's what I suggest. "
+    if land and fp:
+        zones = ", ".join(f"{z['area_m2']:,} m² {z['cover'].replace('open', 'open field').replace('shade', 'shade-net house').replace('greenhouse', 'cooled greenhouse')}"
+                          for z in fp["zones"])
+        text += f"Lay the land out as {zones}, with a shed, a {fp['tank_m3']} m³ water tank" + (
+            f" and {fp['solar_kw']} kW of solar power" if fp["solar_kw"] else "") + ". "
+    text += (f"{'Each bed' if n > 1 else 'The bed'} gets a sensor set and {pumps}, and the "
+             f"master goes in the {hw['master']['location']}. ")
     if left:
         text += f"The beds are in the open air, so {left[0].split(' (')[0]}. "
     count = sum(len(d["specialists"]) for d in net["departments"])
     text += f"I'll also set up {count} AI specialists and a Farm Director for your {beds_text(n)}. "
+    if fp:
+        text += (f"Set-up costs about {fp['capex_total']:,} QR and the crops could make about {fp['profit']:,} QR profit a year"
+                 + (f", paying back in about {fp['payback_years']} years. " if fp["payback_years"] else ". "))
+        if parts["plan"].get("phase"):
+            text += f"Your budget covers about {parts['plan']['phase']['share']:.0%} of the land to begin with. "
     crops = parts.get("crops", {}).get("fields", {})
     first = next(iter(crops.values()), {})
-    if parts["profile"].get("crop") == "undecided" and first.get("now"):
+    if not land and parts["profile"].get("crop") == "undecided" and first.get("now"):
         best = first["now"][:2]
         text += ("You haven't chosen a crop yet: right now " + " or ".join(r["name"].split(" (")[0].lower() for r in best)
                  + f" would suit your beds ({best[0]['reasons'][0]}). ")

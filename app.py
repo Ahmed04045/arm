@@ -27,7 +27,7 @@ import llm
 import network
 import onboarding
 import weather
-from checker import KIND_LABEL, settings_for
+from checker import KIND_LABEL
 from knowledge import KIND_UNIT
 
 st.set_page_config(page_title="Hydro Monitor", page_icon="🌱", layout="wide")
@@ -51,6 +51,28 @@ st.markdown(
     .crop .name{font-size:1.2rem;font-weight:700}
     .crop .money{font-size:1.1rem;font-weight:600;color:#2ea05a}
     .ar, .ar *{direction:rtl;text-align:right}
+    .hero{background:linear-gradient(120deg,#1f7a4d 0%,#2e9e6a 45%,#2b8fb0 100%);color:#fff;border-radius:22px;
+          padding:1.4rem 1.8rem 1.2rem;margin:.2rem 0 1rem 0;box-shadow:0 10px 30px rgba(31,122,77,.25)}
+    .hero-kicker{font-family:monospace;font-size:.78rem;letter-spacing:.12em;text-transform:uppercase;opacity:.85}
+    .hero-title{font-size:2.3rem;font-weight:800;line-height:1.15;margin:.2rem 0 .35rem}
+    .hero-sub{font-size:1.02rem;opacity:.95}
+    .kpi{border-radius:18px;padding:.9rem 1rem;background:rgba(46,158,106,.10);border:1px solid rgba(46,158,106,.25);
+         min-height:128px;margin-bottom:.6rem}
+    .kpi-icon{font-size:1.5rem}.kpi-value{font-size:1.45rem;font-weight:800;margin-top:.1rem;line-height:1.25}
+    .kpi-label{font-weight:600;opacity:.9}.kpi-sub{font-size:.82rem;opacity:.7}
+    .dept{border-radius:16px;padding:.85rem 1rem;margin-bottom:.8rem;border:1px solid rgba(128,128,128,.22);
+          border-top:5px solid #2ea05a;background:rgba(128,128,128,.05);min-height:170px}
+    .dept.watch{border-top-color:#e08a00}.dept.act{border-top-color:#d73c3c}
+    .dept-head{font-weight:700;font-size:1.05rem;margin-bottom:.35rem}
+    .dept-text{font-size:.93rem;line-height:1.5}.dept-warn{font-size:.85rem;margin-top:.4rem;color:#e08a00}
+    .pill{font-size:.7rem;font-weight:600;background:rgba(46,120,200,.15);color:#2e78c8;border-radius:10px;padding:1px 8px;margin-left:.3rem}
+    .overview{border-radius:18px;padding:1.1rem 1.3rem;margin:.4rem 0 1rem;background:linear-gradient(135deg,rgba(46,120,200,.13),rgba(46,158,106,.13));
+         border:1px solid rgba(46,120,200,.3)}
+    .big-head{font-size:1.25rem;font-weight:800;margin-bottom:.4rem}.big-text{font-size:1.12rem;line-height:1.7}
+    .big-stats{margin-top:.5rem;font-size:.95rem;opacity:.9}
+    .todo{font-size:1.05rem;padding:.35rem 0}
+    .story{border-radius:14px;padding:.8rem 1rem;background:rgba(240,199,94,.14);border-left:5px solid #f0c75e;margin:.4rem 0 .8rem}
+    .muted{opacity:.75;font-size:.87rem}
     </style>""",
     unsafe_allow_html=True,
 )
@@ -118,7 +140,7 @@ def network_dot(net: dict) -> str:
 def live_section(con, farm: dict, plan: dict | None) -> None:
     kinds = farms.field_kinds(farm["hardware"])
     since = (datetime.now() - timedelta(hours=24)).timestamp()
-    rows = [r for r in db.read_log(con, since) if r["type"] == "reading"]
+    rows = [r for r in db.read_log(con, since, farm_id=farm["id"]) if r["type"] == "reading"]
     if not rows:
         st.info("No readings yet. Start the master (or `python fake_master.py`), or seed the demo with `python seed_demo.py`.")
         return
@@ -147,7 +169,7 @@ def live_section(con, farm: dict, plan: dict | None) -> None:
             st.line_chart(chart.pivot_table(index="t", columns="field_id", values="value"), height=230)
     with right:
         st.caption("Latest rows from the master (plan 2.4 log format)")
-        st.dataframe(pd.DataFrame(db.latest_rows(con, 14)), hide_index=True, height=260, width="stretch")
+        st.dataframe(pd.DataFrame(db.latest_rows(con, 14, farm["id"])), hide_index=True, height=260, width="stretch")
 
 
 def show(value) -> str:
@@ -169,7 +191,7 @@ def plan_section(con, farm: dict, plan: dict) -> None:
     def review(item: str, text: str, key: str) -> None:
         c1, c2, c3 = st.columns([6, 1, 1.3])
         done = decisions.get(item)
-        c1.markdown(text + (f"  \n:green[✓ approved]" if done and done["decision"] == "approve" else
+        c1.markdown(text + ("  \n:green[✓ approved]" if done and done["decision"] == "approve" else
                             f"  \n:orange[✎ corrected: {done['correction']}]" if done else ""), unsafe_allow_html=True)
         if c2.button("Approve", key=f"ap{key}"):
             db.add_approval(con, plan["version"], item, "approve")
@@ -264,7 +286,7 @@ def dev_page() -> None:
         b.metric("Last agent run", runs[0]["status"], help=f"{runs[0]['trigger']} · {runs[0]['started_at']}")
     b.caption("Runs every 6 h (server.py) or on Run now")
     c.metric("Specialists", farms.specialist_count(net), help=f"+ {farms.specialist_count(net, True) - farms.specialist_count(net)} in the extras")
-    d.metric("Rows logged", f"{con.execute('SELECT COUNT(*) FROM log').fetchone()[0]:,}")
+    d.metric("Rows logged", f"{con.execute('SELECT COUNT(*) FROM log WHERE farm_id = ?', (farm['id'],)).fetchone()[0]:,}")
 
     st.markdown('<div class="step">01 · LIVE READINGS FROM THE MASTER</div>', unsafe_allow_html=True)
     if auto:
@@ -315,9 +337,9 @@ def dev_page() -> None:
         field = st.selectbox("Field", [f["field_id"] for f in profile["fields"]])
         text = st.text_input("Note", placeholder="e.g. leaves on the west edge look pale")
         if st.form_submit_button("Add note") and text:
-            db.add_note(con, field, text)
+            db.add_note(con, field, text, farm["id"])
             st.rerun()
-    notes = db.notes(con, limit=6)
+    notes = db.notes(con, limit=6, farm_id=farm["id"])
     n2.dataframe(pd.DataFrame(notes)[["field_id", "text", "created_at"]] if notes else pd.DataFrame(), hide_index=True, width="stretch")
 
     st.markdown('<div class="step">06 · ASK THE FARM (extra)</div>', unsafe_allow_html=True)
@@ -349,11 +371,28 @@ def crops_for(farm_id: str) -> dict:
     return crop_advice.suggest(farms.load_farm(farm_id))
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def farm_plan_for(farm_id: str) -> dict:
+    """The onboarding's saved plan (bare land) or a fresh one for a working farm."""
+    import farm_plan
+
+    f = farms.load_farm(farm_id)
+    return f.get("plan") or farm_plan.plan(f["profile"])
+
+
 def _html(text: str, ar: bool, cls: str = "") -> None:
     st.markdown(f'<div class="{cls} {"ar" if ar else ""}">{text}</div>', unsafe_allow_html=True)
 
 
 WATER_ICON = {"low": "💧", "medium": "💧💧", "high": "💧💧💧"}
+DEPT_ICON = {"ENV": "🌤️", "SOIL": "💧", "CROP": "🌱", "DATA": "📈", "MKT": "🛒", "FIN": "💰", "DIR": "🧭"}
+DEPT_AR = {"ENV": "البيئة الزراعية", "SOIL": "التربة والماء", "CROP": "علوم المحاصيل", "DATA": "البيانات والتحليل",
+           "MKT": "السوق والمحاصيل", "FIN": "المالية"}
+STATUS_CLS = {"OK": "ok", "WARNING": "watch", "CRITICAL": "act"}
+
+
+def qr(n: float | int | None) -> str:
+    return "–" if n is None else f"{n:,.0f} QR"
 
 
 def crop_card(r: dict, ar: bool, area: int) -> None:
@@ -363,99 +402,221 @@ def crop_card(r: dict, ar: bool, area: int) -> None:
     conf = fv.t(r["confidence"], ar) if r["confidence"] in ("official", "estimate", "proxy", "farmer") else r["confidence"]
     _html(f'<div class="name">{name}</div>'
           f'<div>{fv.t("ready_in", ar)} {r["days"]} {fv.t("days", ar)}</div>'
-          f'<div class="money">{money}</div><div style="opacity:.75;font-size:.85rem">{fv.t("per_harvest", ar) if area else ""} · {conf}</div>'
+          f'<div class="money">{money}</div><div class="muted">{fv.t("per_harvest", ar) if area else ""} · {conf}</div>'
           f'<div>{fv.t("water_need", ar)}: {WATER_ICON[r["water"]]} · {fv.t("care", ar)}: {fv.t(r["care"], ar)}</div>'
-          f'<div style="opacity:.85;font-size:.9rem;margin-top:.3rem">' + "<br>".join(f"• {x}" for x in reasons[:3]) + "</div>",
+          f'<div class="muted" style="margin-top:.3rem">' + "<br>".join(f"• {x}" for x in reasons[:3]) + "</div>",
           ar, "crop")
 
 
-def farmer_page() -> None:
-    ar = language()
-    route = sidebar(show_models=False)
-    con = connection()
-    farm = farms.load_farm()
-    profile = farm["profile"]
-    plan = db.latest_plan(con, farm["id"])
+def kpi(col, icon: str, label: str, value: str, sub: str = "") -> None:
+    col.markdown(f'<div class="kpi"><div class="kpi-icon">{icon}</div><div class="kpi-value">{value}</div>'
+                 f'<div class="kpi-label">{label}</div><div class="kpi-sub">{sub}</div></div>', unsafe_allow_html=True)
+
+
+def hero(farm: dict, fc: dict | None, updated: str | None, ar: bool) -> None:
+    p = farm["profile"]
     t = lambda key, **kw: fv.t(key, ar, **kw)   # noqa: E731
-
-    updated = fv.updated_at(con, farm)
-    _html(f'<div class="kicker">Hydro Monitor</div>', ar)
-    st.title(f"🌱 {profile['name']}")
-    fc = forecast_today(profile.get("latitude") or 25.29, profile.get("longitude") or 51.53)
-    bits = [f"{profile['location']}"]
+    bits = [f"📍 {p['location']}"]
     if fc:
-        bits.append(f"☀️ {t('weather')}: {t('up_to')} {fc['temp_max']:.0f} °C, {t('hottest')} {fc['hottest_hour']}")
+        bits.append(f"☀️ {t('up_to')} {fc['temp_max']:.0f} °C · {t('hottest')} {fc['hottest_hour']}")
     if updated:
-        bits.append(f"{t('updated')} {updated}")
-    _html(" · ".join(bits), ar)
+        bits.append(f"🔄 {t('updated')} {updated}")
+    stage = t("stage_land") if p.get("stage") == "land" else t("stage_farm")
+    st.markdown(f'<div class="hero {"ar" if ar else ""}"><div class="hero-kicker">Hydro Monitor · {stage}</div>'
+                f'<div class="hero-title">🌱 {p["name"]}</div><div class="hero-sub">{" &nbsp;·&nbsp; ".join(bits)}</div></div>',
+                unsafe_allow_html=True)
 
-    # 1. the beds, in plain words
-    st.subheader(t("beds"))
+
+def team_section(plan: dict | None, money: dict, ar: bool) -> None:
+    """Each department's insight, then the combined overview (the Farm Director)."""
+    t = lambda key, **kw: fv.t(key, ar, **kw)   # noqa: E731
+    reports = {k: v for k, v in ((plan or {}).get("reports") or {}).items() if not k.startswith("_")}
+    st.markdown(f"### 🤖 {t('team')}")
+    if not reports:
+        st.info(t("no_plan"))
+        return
+    cols = st.columns(3)
+    for i, r in enumerate(reports.values()):
+        code = r.get("code") or ""
+        name = DEPT_AR.get(code, r["name"]) if ar else r["name"]
+        text = r.get("summary_ar") if ar and r.get("summary_ar") else r["summary"]
+        warn = (r.get("warnings") or [None])[0]
+        with cols[i % 3]:
+            _html(f'<div class="dept-head">{DEPT_ICON.get(code, "🧩")} {name}'
+                  f'{" <span class=pill>" + t("advice_only") + "</span>" if r.get("advice_only") else ""}</div>'
+                  f'<div class="dept-text">{text}</div>'
+                  + (f'<div class="dept-warn">⚠ {warn}</div>' if warn and not ar else ""),
+                  ar, f"dept {STATUS_CLS.get(r.get('status'), 'ok')}")
+    warnings = sum(len(r.get("warnings") or []) for r in reports.values())
+    changes = len((plan.get("reports") or {}).get("_changes") or [])
+    flags = len(plan.get("flags") or [])
+    message = plan.get("message_ar") if ar and plan.get("message_ar") else plan.get("message_en") or ""
+    best = money["recommended"]
+    finance = (f"💰 {t('profit_year')}: <b>{qr(best['profit'])}</b> · {t('setup')}: {qr(best['capex_total'])}"
+               + (f" · {t('payback')}: {best['payback_years']} {t('years')}" if best["payback_years"] else ""))
+    _html(f'<div class="big-head">🧭 {t("big_picture")}</div><div class="big-text">{message}</div>'
+          f'<div class="big-stats">🔎 {warnings} {t("n_warnings")} · 🎛️ {changes} {t("n_changes")}'
+          f'{" (" + str(flags) + " " + t("n_checked") + ")" if flags else ""} · ✅ {len(plan.get("todos") or [])} {t("n_todos")}</div>'
+          f'<div class="big-stats">{finance}</div>', ar, "overview")
+
+
+def todo_section(con, plan: dict | None, ar: bool) -> None:
+    t = lambda key, **kw: fv.t(key, ar, **kw)   # noqa: E731
+    if not plan or not plan.get("todos"):
+        return
+    st.markdown(f"### ✅ {t('todo')}")
+    decisions = db.approvals(con, plan["version"])
+    todos_ar = plan.get("todos_ar") or []
+    for i, todo in enumerate(plan["todos"]):
+        text = todos_ar[i] if ar and i < len(todos_ar) else todo
+        item = f"todo:{i + 1}"
+        state = decisions.get(item)
+        a, b, c = st.columns([5.2, 1, 1.8])
+        with a:
+            _html(("✅ " if state and state["decision"] == "done" else "⬜ ") + text, ar, "todo")
+        if b.button(t("done"), key=f"done{i}"):
+            db.add_approval(con, plan["version"], item, "done")
+            st.rerun()
+        with c.popover(f"✏️ {t('correct')}"):
+            fix = st.text_input(t("correct_q"), key=f"fix{i}")
+            if st.button(t("save"), key=f"save{i}") and fix:
+                db.add_approval(con, plan["version"], item, "correct", fix)
+                st.rerun()
+    m1, m2, _ = st.columns([1.1, 1.5, 3.4])
+    if m1.button(f"👍 {t('helpful')}", key="msg_ok"):
+        db.add_approval(con, plan["version"], "message", "approve")
+        st.toast(t("thanks"))
+    with m2.popover(f"✏️ {t('correct')}"):
+        fix = st.text_input(t("correct_q"), key="msg_fix")
+        if st.button(t("save"), key="msg_save") and fix:
+            db.add_approval(con, plan["version"], "message", "correct", fix)
+            st.toast(t("thanks"))
+
+
+def beds_section(con, farm: dict, plan: dict | None, ar: bool) -> None:
+    t = lambda key, **kw: fv.t(key, ar, **kw)   # noqa: E731
+    st.markdown(f"### 🪴 {t('beds')}")
     cards = fv.bed_cards(con, farm, plan, ar)
     icon = {"ok": "🟢", "watch": "🟠", "act": "🔴", "none": "⚪"}
-    cols = st.columns(min(3, len(cards)) or 1)
+    planned = farm["profile"].get("stage") == "land"
+    cols = st.columns(min(4, len(cards)) or 1)
     for i, c in enumerate(cards):
         with cols[i % len(cols)]:
             crop_line = " · ".join(x for x in (c["crop"], c["day"], c["timing"]) if x)
             facts = []
             if c["soil"] is not None:
-                facts.append(f"🌱 {t('soil')} {c['soil']:.0f}%")
+                facts.append(f"🌱 {c['soil']:.0f}%")
             if c["temp"] is not None:
-                facts.append(f"🌡️ {t('air')} {c['temp']:.0f} °C")
+                facts.append(f"🌡️ {c['temp']:.0f} °C")
             if c["tank"] is not None:
-                facts.append(f"🛢️ {t('tank')} {c['tank']:.0f}%")
-            facts.append(f"🚿 {t('watered')}: {c['watered']}")
-            _html(f'<h3>{icon[c["level"]]} {c["field_id"]} · {crop_line}</h3>'
-                  f'<div class="big">{c["headline"]}</div>'
-                  + "".join(f"<div>{m}</div>" for m in c["more"])
-                  + f'<div class="facts">{" · ".join(facts)}</div>', ar, f"bed {c['level']}")
+                facts.append(f"🛢️ {c['tank']:.0f}%")
+            if c["soil"] is not None:
+                facts.append(f"🚿 {c['watered']}")
+            headline = t("planned_bed") if planned and c["level"] == "none" else c["headline"]
+            _html(f'<h3>{icon[c["level"]] if not planned or c["level"] != "none" else "📐"} {c["field_id"]} · {crop_line}</h3>'
+                  f'<div class="big">{headline}</div>' + "".join(f"<div>{m}</div>" for m in c["more"])
+                  + (f'<div class="facts">{" · ".join(facts)}</div>' if facts else ""), ar, f"bed {c['level']}")
 
-    # 2. today's advice from the AI team
-    st.subheader(t("advice"))
-    if plan and plan.get("reports"):
-        message = plan.get("message_ar") if ar and plan.get("message_ar") else plan.get("message_en") or ""
-        _html(message, ar, "advice")
-        decisions = db.approvals(con, plan["version"])
-        m1, m2, _ = st.columns([1.1, 1.5, 3.4])
-        if m1.button(f"👍 {t('helpful')}", key="msg_ok"):
-            db.add_approval(con, plan["version"], "message", "approve")
-            st.toast(t("thanks"))
-        with m2.popover(f"✏️ {t('correct')}"):
-            fix = st.text_input(t("correct_q"), key="msg_fix")
-            if st.button(t("save"), key="msg_save") and fix:
-                db.add_approval(con, plan["version"], "message", "correct", fix)
-                st.toast(t("thanks"))
-        todos = plan.get("todos") or []
-        todos_ar = plan.get("todos_ar") or []
-        if todos:
-            st.markdown(f"**{t('todo')}**")
-        for i, todo in enumerate(todos):
-            text = todos_ar[i] if ar and i < len(todos_ar) else todo
-            item = f"todo:{i + 1}"
-            state = decisions.get(item)
-            a, b, c = st.columns([6, 1, 1.3])
-            with a:
-                _html(("✅ " if state and state["decision"] == "done" else "⬜ ") + text, ar)
-            if b.button(t("done"), key=f"done{i}"):
-                db.add_approval(con, plan["version"], item, "done")
-                st.rerun()
-            with c.popover(f"✏️ {t('correct')}"):
-                fix = st.text_input(t("correct_q"), key=f"fix{i}")
-                if st.button(t("save"), key=f"save{i}") and fix:
-                    db.add_approval(con, plan["version"], item, "correct", fix)
-                    st.rerun()
-    else:
-        st.info(t("no_plan"))
-    if st.button(f"🔄 {t('refresh')}", help=t("refresh_help")):
-        with st.status(t("refresh_help"), expanded=False) as status:
-            result = network.run(con, trigger="button", route=route["name"], progress=status.write)
-            status.update(state="complete" if result["status"] == "ok" else "error",
-                          label="✓" if result["status"] == "ok" else result.get("error", "failed"))
-        if result["status"] == "ok":
-            st.rerun()
 
-    # 3. what to plant
-    st.subheader(f"🌾 {t('plant')}")
+def calendar_chart(money: dict, ar: bool):
+    """The crop combination as a year calendar: one labelled row per zone and crop, cool season then hot season."""
+    import altair as alt
+
+    rows = []
+    for z in money["recommended"]["zones"]:
+        cover = farm_plan_mod().COVER_LABEL[z["cover"]][1 if ar else 0]
+        for c in z["crops"]:
+            start, end = (0, 7) if c["season"] == "cool" else (7, 12)
+            name = c["ar"] if ar else c["name"].split(" (")[0]
+            rows.append({"row": f"{z['zone']} {cover} · {name}", "crop": name, "start": start, "end": end,
+                         "label": f"{name} · {c['share']:.0%} · {c['area_m2']:,} m²" if c["crop"] else name,
+                         "sales": c["sales"], "order": f"{z['zone']}{start:02d}"})
+    df = pd.DataFrame(rows)
+    months = ["Oct", "Nov", "Dec", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep"]
+    label_expr = "[" + ",".join(f"'{fv.month_name(m, ar)[:3] if not ar else fv.month_name(m, ar)}'" for m in months) + "][datum.value]"
+    order = list(dict.fromkeys(df.sort_values(["order"])["row"]))
+    base = alt.Chart(df).encode(
+        y=alt.Y("row:N", title=None, sort=order, axis=alt.Axis(labelLimit=260)),
+        x=alt.X("start:Q", title=None, scale=alt.Scale(domain=[0, 12]),
+                axis=alt.Axis(values=list(range(13)), labelExpr=label_expr, labelAngle=0, grid=True)),
+        x2="end:Q", tooltip=["row", "label", alt.Tooltip("sales:Q", format=",.0f", title="QR / season")])
+    bars = base.mark_bar(cornerRadius=7, height=22).encode(color=alt.Color("crop:N", legend=None, scale=alt.Scale(scheme="tableau20")))
+    text = base.mark_text(align="left", dx=8, color="white", fontWeight="bold").encode(text="label:N")
+    return (bars + text).properties(height=34 * len(order) + 30)
+
+
+def finance_charts(money: dict, ar: bool):
+    import altair as alt
+
+    best = money["recommended"]
+    pl = pd.DataFrame([{"what": fv.t("sales", ar), "QR": best["sales"], "kind": "in"},
+                       *[{"what": k, "QR": v, "kind": "out"} for k, v in best["opex"].items() if v],
+                       {"what": fv.t("profit_year", ar), "QR": best["profit"], "kind": "profit"}])
+    colours = alt.Scale(domain=["in", "out", "profit"], range=["#2ea05a", "#e08a00", "#2e78c8"])
+    bars = alt.Chart(pl).mark_bar(cornerRadius=6).encode(
+        x=alt.X("QR:Q", title="QR / year"), y=alt.Y("what:N", sort=None, title=None),
+        color=alt.Color("kind:N", scale=colours, legend=None), tooltip=["what", alt.Tooltip("QR:Q", format=",.0f")])
+    capex = pd.DataFrame(best["capex"]).sort_values("total", ascending=False)
+    capex["item"] = capex["item"].str.replace(r" \((.*)\)", r" · \1", regex=True)
+    setup = alt.Chart(capex).mark_bar(cornerRadius=6, color="#8e6fd1").encode(
+        x=alt.X("total:Q", title="QR"), y=alt.Y("item:N", sort="-x", title=None, axis=alt.Axis(labelLimit=240)),
+        tooltip=["item", alt.Tooltip("total:Q", format=",.0f", title="QR"), "what"])
+    setup_text = alt.Chart(capex).mark_text(align="left", dx=4, color="#9a9a9a").encode(
+        x="total:Q", y=alt.Y("item:N", sort="-x"), text=alt.Text("total:Q", format=",.0f"))
+    return bars.properties(height=220), (setup + setup_text).properties(height=28 * len(capex) + 20)
+
+
+def farm_plan_mod():
+    import farm_plan
+
+    return farm_plan
+
+
+def plan_tab(farm: dict, money: dict, ar: bool) -> None:
+    t = lambda key, **kw: fv.t(key, ar, **kw)   # noqa: E731
+    fp = farm_plan_mod()
+    best = money["recommended"]
+    c1, c2, c3, c4 = st.columns(4)
+    kpi(c1, "🏗️", t("setup"), qr(best["capex_total"]),
+        (f"{t('budget')}: {qr(money['budget_qr'])}" if money.get("budget_qr") else t("no_budget")))
+    kpi(c2, "🧺", t("sales"), qr(best["sales"]), t("per_year"))
+    kpi(c3, "💰", t("profit_year"), qr(best["profit"]), f"{best['margin_pct']}% {t('of_sales')}")
+    kpi(c4, "⏳", t("payback"), f"{best['payback_years']} {t('years')}" if best["payback_years"] else "–",
+        best["label"][1 if ar else 0])
+    if money.get("story") and not ar:
+        _html(f"🧑‍🌾 {money['story']}", ar, "story")
+    for w in money.get("warnings") or []:
+        st.warning(w)
+    left, right = st.columns([1.25, 1])
+    with left:
+        st.markdown(f"#### 🗺️ {t('site')}")
+        st.markdown(fp.site_svg(money, ar), unsafe_allow_html=True)
+    with right:
+        st.markdown(f"#### 🧾 {t('setup_items')}")
+        _, setup = finance_charts(money, ar)
+        st.altair_chart(setup, width="stretch")
+    st.markdown(f"#### 🌾 {t('combo')}")
+    st.altair_chart(calendar_chart(money, ar), width="stretch")
+    st.caption(t("combo_note"))
+    st.markdown(f"#### 📊 {t('money')}")
+    bars, _ = finance_charts(money, ar)
+    st.altair_chart(bars, width="stretch")
+    options = pd.DataFrame([{t("option"): o["label"][1 if ar else 0], t("setup"): qr(o["capex_total"]),
+                             t("profit_year"): qr(o["profit"]),
+                             t("payback"): f"{o['payback_years']} {t('years')}" if o["payback_years"] else "–",
+                             t("fits_budget"): "✅" if not money.get("budget_qr") or o["capex_total"] <= money["budget_qr"] else "❌"}
+                            for o in money["options"].values()])
+    st.markdown(f"#### ⚖️ {t('options')}")
+    st.dataframe(options, hide_index=True, width="stretch")
+    if money.get("current"):
+        cur, mix = money["current"], money["options"]["starter"]
+        st.info(f"{t('today_crop')}: {qr(cur['profit'])} / {t('per_year')} → {t('best_mix')}: {qr(mix['profit'])} "
+                f"({mix['profit'] - cur['profit']:+,} QR)")
+    st.caption(money.get("assumptions", ""))
+
+
+def plant_tab(farm: dict, ar: bool) -> None:
+    t = lambda key, **kw: fv.t(key, ar, **kw)   # noqa: E731
     advice = crops_for(farm["id"])
     groups: dict[str, list[str]] = {}
     for field_id, f in advice["fields"].items():   # beds with the same suggestions are shown once
@@ -464,47 +625,102 @@ def farmer_page() -> None:
     for fields in groups.values():
         f = advice["fields"][fields[0]]
         label = " · ".join(fields) + (f" ({f['area_m2']:,} m²)" if len(fields) == 1 and f["area_m2"] else "")
-        st.markdown(f"**{label}** — {t('plant_now')}")
+        st.markdown(f"#### {label} — {t('plant_now')}")
         if f["now"]:
             cols = st.columns(len(f["now"]))
             for col, r in zip(cols, f["now"]):
                 with col:
                     crop_card(r, ar, f["area_m2"])
         if f["later"]:
-            later = " · ".join(f"**{fv.month_name(r['plant_from_month'], ar)}**: {r['ar'] if ar else r['name']}" for r in f["later"])
-            _html(f"📅 {t('later')}: " + later.replace("**", ""), ar)
+            later = " · ".join(f"{fv.month_name(r['plant_from_month'], ar)}: {r['ar'] if ar else r['name']}" for r in f["later"])
+            _html(f"📅 {t('later')}: {later}", ar, "story")
     st.caption(t("gross"))
 
-    tips = fv.market_tips(plan)
-    if tips:
-        with st.expander(f"💰 {t('market')}"):
-            for tip in tips:
-                st.markdown(f"**{tip['title']}** — {tip['detail']}")
 
-    # 4. notes and questions
-    left, right = st.columns([1, 1.4])
-    with left:
-        st.subheader(f"📝 {t('notes')}")
-        with st.form("note", clear_on_submit=True):
-            field = st.selectbox("Bed", [f["field_id"] for f in profile["fields"]], label_visibility="collapsed")
-            text = st.text_input("Note", placeholder=t("note_ph"), label_visibility="collapsed")
-            if st.form_submit_button(t("add")) and text:
-                db.add_note(con, field, text)
-                st.toast(t("thanks"))
-        for n in db.notes(con, limit=3):
-            st.caption(f"{n['field_id']} · {n['text']}")
-    with right:
-        st.subheader(f"💬 {t('ask')}")
-        chat = st.session_state.setdefault("farmer_chat", [])
-        for turn in chat[-6:]:
-            with st.chat_message(turn["role"]):
-                st.write(turn["text"])
-        question = st.chat_input(t("ask_ph"))
-        if question:
-            chat.append({"role": "user", "text": question})
-            with st.spinner("…"):
-                reply = assistant.answer(question, farm, plan, route)
-            chat.append({"role": "assistant", "text": reply["text"]})
+def farmer_page() -> None:
+    ar = language()
+    farm_switcher()
+    route = sidebar(show_models=False)
+    con = connection()
+    farm = farms.load_farm()
+    profile = farm["profile"]
+    plan = db.latest_plan(con, farm["id"])
+    money = farm_plan_for(farm["id"])
+    t = lambda key, **kw: fv.t(key, ar, **kw)   # noqa: E731
+
+    fc = forecast_today(profile.get("latitude") or 25.29, profile.get("longitude") or 51.53)
+    hero(farm, fc, fv.updated_at(con, farm), ar)
+    cards = fv.bed_cards(con, farm, plan, ar)
+    ok = sum(1 for c in cards if c["level"] == "ok")
+    soon = [c["timing"] for c in cards if c.get("timing")]
+    k1, k2, k3, k4 = st.columns(4)
+    kpi(k1, "🪴", t("kpi_beds"), f"{ok}/{len(cards)}" if any(c["level"] != "none" for c in cards) else f"{len(cards)}",
+        t("kpi_beds_sub") if any(c["level"] != "none" for c in cards) else t("planned_bed"))
+    kpi(k2, "💰", t("profit_year"), qr(money["recommended"]["profit"]), t("estimate_word"))
+    kpi(k3, "🌾", t("kpi_harvest"), soon[0] if soon else "–", cards[0]["crop"] if cards else "")
+    kpi(k4, "💧", t("kpi_water"), f"{money['recommended']['water_m3_year']:,} m³", t("per_year"))
+
+    tab_today, tab_plan, tab_plant, tab_talk = st.tabs(
+        [f"🌿 {t('tab_today')}", f"🗺️ {t('tab_plan')}", f"🌾 {t('plant')}", f"💬 {t('tab_talk')}"])
+    with tab_today:
+        beds_section(con, farm, plan, ar)
+        team_section(plan, money, ar)
+        todo_section(con, plan, ar)
+        waiting_for_sensors = profile.get("stage") == "land" and not fv.updated_at(con, farm)
+        if not waiting_for_sensors and st.button(f"🔄 {t('refresh')}", help=t("refresh_help"), type="primary"):
+            with st.status(t("refresh_help"), expanded=False) as status:
+                result = network.run(con, trigger="button", route=route["name"], progress=status.write)
+                status.update(state="complete" if result["status"] == "ok" else "error",
+                              label="✓" if result["status"] == "ok" else result.get("error", "failed"))
+            if result["status"] == "ok":
+                st.rerun()
+        if waiting_for_sensors:
+            st.info(t("land_note"))
+    with tab_plan:
+        plan_tab(farm, money, ar)
+    with tab_plant:
+        plant_tab(farm, ar)
+        tips = fv.market_tips(plan)
+        if tips:
+            with st.expander(f"🛒 {t('market')}"):
+                for tip in tips:
+                    st.markdown(f"**{tip['title']}** — {tip['detail']}")
+    with tab_talk:
+        left, right = st.columns([1, 1.4])
+        with left:
+            st.markdown(f"### 📝 {t('notes')}")
+            with st.form("note", clear_on_submit=True):
+                field = st.selectbox("Bed", [f["field_id"] for f in profile["fields"]], label_visibility="collapsed")
+                text = st.text_input("Note", placeholder=t("note_ph"), label_visibility="collapsed")
+                if st.form_submit_button(t("add")) and text:
+                    db.add_note(con, field, text, farm["id"])
+                    st.toast(t("thanks"))
+            for n in db.notes(con, limit=3, farm_id=farm["id"]):
+                st.caption(f"{n['field_id']} · {n['text']}")
+        with right:
+            st.markdown(f"### 💬 {t('ask')}")
+            chat = st.session_state.setdefault("farmer_chat", [])
+            for turn in chat[-6:]:
+                with st.chat_message(turn["role"]):
+                    st.write(turn["text"])
+            question = st.text_input(t("ask_ph"), key="ask_box")
+            if st.button(t("add"), key="ask_send") and question:
+                chat.append({"role": "user", "text": question})
+                with st.spinner("…"):
+                    reply = assistant.answer(question, farm, plan, route)
+                chat.append({"role": "assistant", "text": reply["text"]})
+                st.rerun()
+
+
+def farm_switcher() -> None:
+    """Pick which farm the board shows (the demo has a working farm and a bare-land plan)."""
+    names = farms.list_farms()
+    current = farms.active_farm_id()
+    if len(names) > 1:
+        choice = st.sidebar.selectbox("🏡 Farm", names, index=names.index(current) if current in names else 0)
+        if choice != current:
+            farms.set_active(choice)
+            st.cache_data.clear()
             st.rerun()
 
 
@@ -580,7 +796,10 @@ def onboarding_page() -> None:
 
     parts = s.ob_parts
     st.markdown('<div class="step">WHAT THE ASSISTANT PRODUCED · FOR TEAM REVIEW</div>', unsafe_allow_html=True)
-    t0, t1, t2, t3, t4 = st.tabs(["🌾 Crop suggestions", "1 · Farm profile", "2 · Hardware plan", "3 · Hard limits", "4 · Agent network"])
+    tp, t0, t1, t2, t3, t4 = st.tabs(["💰 Farm plan & money", "🌾 Crop suggestions", "1 · Farm profile", "2 · Hardware plan",
+                                      "3 · Hard limits", "4 · Agent network"])
+    with tp:
+        plan_tab(None, parts["plan"], ar)
     with t0:
         for field_id, f in parts["crops"]["fields"].items():
             st.markdown(f"**{field_id}** ({f['area_m2']:,} m², {'greenhouse' if f['covered'] else 'open air'}) — {fv.t('plant_now', ar)}")
@@ -634,6 +853,7 @@ def onboarding_page() -> None:
                      parts["limits"]["start"], made_by="onboarding (starting ranges)", trigger="onboarding",
                      message_en="Starting ranges from onboarding.", todos=[], flags=[])
         crops_for.clear()
+        farm_plan_for.clear()
         st.success(f"Saved farms/{farm_id} and made it the active farm. Open 'My farm' to see it.")
 
 

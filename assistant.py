@@ -41,8 +41,19 @@ def build_context(farm: dict[str, Any], plan: dict[str, Any] | None) -> str:
         lines.append(f"{r.get('name')} report: {r['summary']} Warnings: {'; '.join(r.get('warnings', []))}")
     lines.append(f"Director's message: {plan.get('message_en')}")
     lines.append("To-dos: " + "; ".join(plan.get("todos") or []))
-    for a in plan.get("advice") or []:
+    from farmer_view import market_tips
+
+    for a in market_tips(plan):
         lines.append(f"Market advice: {a['title']}: {a['detail']} (price confidence {a['confidence']})")
+    advice = plan.get("advice") if isinstance(plan.get("advice"), dict) else {}
+    if advice.get("farm_plan"):
+        import farm_plan
+
+        lines.append("Farm plan and money (code): " + farm_plan.summary_text(advice["farm_plan"]).replace("\n", " "))
+    if advice.get("crops"):
+        import crop_advice
+
+        lines.append("What to plant (code): " + crop_advice.summary_text(advice["crops"]).replace("\n", " "))
     return "\n".join(lines)
 
 

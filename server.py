@@ -18,7 +18,7 @@ import argparse
 import logging
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response
@@ -73,7 +73,7 @@ async def post_log(request: Request) -> dict[str, Any]:
         rows = db.parse_rows(payload)
     except ValueError as err:
         raise HTTPException(400, str(err)) from err
-    return {"stored": db.insert_rows(con, rows)}
+    return {"stored": db.insert_rows(con, rows, load_farm()["id"])}
 
 
 @app.get("/ranges/version")
@@ -103,7 +103,7 @@ def post_run() -> dict[str, Any]:
 def status() -> dict[str, Any]:
     farm = load_farm()
     plan = db.latest_plan(con, farm["id"])
-    count = con.execute("SELECT COUNT(*) FROM log").fetchone()[0]
+    count = con.execute("SELECT COUNT(*) FROM log WHERE farm_id = ?", (farm["id"],)).fetchone()[0]
     return {"farm": farm["id"], "version": plan["version"] if plan else 0, "rows": count,
             "running": _run_lock.locked(), "runs": db.runs(con, 5), "every_hours": SETTINGS["every_hours"],
             "time": local_now(farm).isoformat(timespec="seconds")}

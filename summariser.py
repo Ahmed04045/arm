@@ -146,8 +146,8 @@ def summarise(con, farm: dict[str, Any], now: datetime | None = None) -> dict[st
     out: dict[str, Any] = {"now": now.isoformat(timespec="minutes"), "fields": {}, "history": {}, "archive": {},
                            "forecast_source": None if not forecast else ("cache" if forecast.get("offline") else "Open-Meteo")}
     for field_id in field_kinds(farm["hardware"]):
-        rows = db.read_log(con, (now - timedelta(hours=ARCHIVE_H)).timestamp(), field_id)
-        recent_notes = [n for n in db.notes(con, field_id, limit=3)
+        rows = db.read_log(con, (now - timedelta(hours=ARCHIVE_H)).timestamp(), field_id, farm["id"])
+        recent_notes = [n for n in db.notes(con, field_id, limit=3, farm_id=farm["id"])
                         if datetime.fromisoformat(n["created_at"]) >= now - timedelta(days=3)]
         note = recent_notes[0]["text"] if recent_notes else None
         out["fields"][field_id] = summarise_field(farm, field_id, rows, now, forecast, note)

@@ -20,7 +20,7 @@ import argparse
 import json
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import timedelta
 from typing import Any, Callable
 
 import checker
@@ -57,7 +57,7 @@ def code_tools(farm: dict[str, Any], summary: dict[str, Any], current: dict[str,
     """{dept_id: {field_id: {'status', 'issues', 'specialists': {name: summary}}}} for every field with data."""
     out: dict[str, dict[str, Any]] = {d["id"]: {} for d in groups}
     hard = farm["limits"]["hard"]
-    advice_done = False
+    advice_done: set[str] = set()       # farm-level (advice-only) departments run once, on the first field
     for field_id in field_kinds(farm["hardware"]):
         history = summary["history"].get(field_id) or []
         if not history:
@@ -74,9 +74,9 @@ def code_tools(farm: dict[str, Any], summary: dict[str, Any], current: dict[str,
         }
         for dept in department_order(groups):
             if dept.get("advice_only"):
-                if advice_done:     # farm-level advice: computed once, from the first field
+                if dept["id"] in advice_done:
                     continue
-                advice_done = True
+                advice_done.add(dept["id"])
             specialists = {}
             issues = []
             for spec in dept["specialists"]:
@@ -244,7 +244,8 @@ def suggested_todos(summary: dict[str, Any], crops: dict[str, Any] | None = None
 
 
 def director_brief(farm: dict[str, Any], summary: dict[str, Any], version: int, current: dict[str, dict[str, Any]],
-                   reports: dict[str, dict[str, Any]], crops: dict[str, Any] | None = None) -> str:
+                   reports: dict[str, dict[str, Any]], crops: dict[str, Any] | None = None,
+                   money: dict[str, Any] | None = None) -> str:
     hard = farm["limits"]["hard"]
     fields = field_kinds(farm["hardware"])
     lines = [f"Farm: {farm['profile']['name']}; {farm['profile']['crop']}; local time {summary['now']}.",
@@ -261,9 +262,13 @@ def director_brief(farm: dict[str, Any], summary: dict[str, Any], version: int, 
         lines += [f"- {t}" for t in todos]
     lines.append("Department reports:")
     lines += [f"- {digest(r)}" for r in reports.values() if not r.get("advice_only")]
-    advice = [r for r in reports.values() if r.get("advice_only")]
-    if advice:
-        lines.append("Market and crop advice (optional, never changes a range): " + advice[0]["summary"])
+    for r in (r for r in reports.values() if r.get("advice_only")):
+        lines.append(f"{r['name']} advice (optional, never changes a range): {r['summary']}")
+    if money:
+        import farm_plan
+
+        lines.append("Farm finances (code): " + farm_plan.summary_text(money).replace("\n", " ")
+                     + " If the farm loses money or a better crop combination pays clearly more, make that one to-do.")
     if crops and any(f.get("current_crop") in (None, "", "undecided") for f in crops["fields"].values()):
         import crop_advice
 
@@ -360,13 +365,20 @@ def run(con=None, farm_id: str | None = None, trigger: str = "button", route: st
         languages = net["director"].get("languages", [])
         step("Stage 3: Farm Director writes the plan" + (" and the Arabic message" if "ar" in languages else ""))
         import crop_advice
+        import farm_plan
 
         crops = crop_advice.suggest(farm)
+        money = farm_plan.plan(farm["profile"])
         plan, error = crew.run_director(net["director"], models["director"],
-                                        director_brief(farm, summary, version, current, reports, crops))
+                                        director_brief(farm, summary, version, current, reports, crops, money))
         if not plan:
             raise RuntimeError(f"the Farm Director gave no usable plan ({error or 'invalid JSON'})")
-        translation = crew.translate(plan["message"], plan["todos"], models["translator"]) if translate and "ar" in languages else None
+        insight_ids = [d for d in reports]
+        translation = crew.translate(plan["message"], plan["todos"], models["translator"],
+                                     [reports[d]["summary"] for d in insight_ids]) if translate and "ar" in languages else None
+        if translation and translation.get("extras_ar"):
+            for d, text in zip(insight_ids, translation["extras_ar"]):
+                reports[d]["summary_ar"] = text
 
         step("Checking the plan against the hard limits (code)")
         proposed = apply_changes(current, plan["changes"])
@@ -374,7 +386,7 @@ def run(con=None, farm_id: str | None = None, trigger: str = "button", route: st
         valid_from = (local_now(farm) + timedelta(minutes=VALID_DELAY_MIN)).isoformat(timespec="seconds")
         advice = {"market": [s for per in tools.get("market_strategy", {}).values() for f in per["specialists"].values()
                              for s in f.get("suggestions", [])],
-                  "crops": crops}
+                  "crops": crops, "farm_plan": money}
         translation = translation or {}
         saved = db.save_plan(
             con, farm["id"], valid_from, ranges, proposed=proposed, flags=flags, message_en=plan["message"],
@@ -404,7 +416,7 @@ def main() -> None:
         return
     plan = result["plan"]
     print(f"\nVersion {plan['version']} (valid from {plan['valid_from']}), {result['detail']['seconds']} s")
-    for d, r in result["reports"].items():
+    for r in result["reports"].values():
         print(f"\n[{r['code']}] {r['name']} ({r['by']}): {r['summary']}")
         for w in r["warnings"][:3]:
             print(f"   ! {w}")
