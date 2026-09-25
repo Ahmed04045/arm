@@ -4,15 +4,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from knowledge import crop_profile
 
-from .base import check_field, finding, narrate
+
+from .base import check_field, finding, done, profile_for
 
 
 def range_monitor(agent: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     """Check each owned field against the crop's ideal and tolerated bands."""
     reading = state["reading"]
-    profile = crop_profile(state["farm"]["crop"])
+    profile = profile_for(state)
     ranges, acceptable = profile["ranges"], profile.get("acceptable", {})
     issues, readings = [], {}
     for field in agent["inputs"]:
@@ -28,4 +28,4 @@ def range_monitor(agent: dict[str, Any], state: dict[str, Any]) -> dict[str, Any
         if issue:
             issues.append(issue)
     result = finding(agent, issues, f"All {len(readings)} monitored readings are within the ideal band.", readings=readings)
-    return narrate(agent, state, result, "In 2 short sentences, tell your department head what is wrong and why it matters for the crop.")
+    return done(result)

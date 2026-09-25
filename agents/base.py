@@ -1,11 +1,11 @@
-"""Helpers shared by every agent: range checks, status roll-up, and LLM narration."""
+"""Helpers shared by the code tools: range checks, status roll-up, the ranges in force, and model choice."""
 
 from __future__ import annotations
 
 from typing import Any
 
 import llm
-from knowledge import LABELS, fmt
+from knowledge import LABELS, crop_profile, fmt
 
 CRITICAL_FRACTION = 0.35  # no tolerated band known: a deviation beyond this share of the ideal band is critical
 
@@ -47,15 +47,11 @@ def finding(agent: dict[str, Any], issues: list[dict[str, Any]], ok_summary: str
     return {"status": worst([i["severity"] for i in issues]), "summary": summary, "issues": issues, **extra}
 
 
-def installed_sensors(state: dict[str, Any]) -> str:
-    fields = [LABELS.get(k, k) for k, v in state["reading"].items() if k != "timestamp" and isinstance(v, (int, float))]
-    return f"Sensors installed: {', '.join(fields)}. Do not mention or advise on any other measurement."
-
-
 def resolve_model(requested: str | None, state: dict[str, Any]) -> str:
     """Where the assigned model runs: its route (cloud if the key is set, or local if installed),
     then the assigned model itself if installed, otherwise the fallback model."""
     installed = state.get("installed_models", [])
+    requested = llm.local_name(requested) if requested else requested
 
     def usable(model: str | None) -> bool:
         return bool(model) and (llm.provider_ready(model) or model in installed or f"{model}:latest" in installed)
@@ -67,24 +63,18 @@ def resolve_model(requested: str | None, state: dict[str, Any]) -> str:
     return installed[0] if installed else state["fallback_model"]   # e.g. cloud route chosen but no API key
 
 
-def narrate(who: dict[str, Any], state: dict[str, Any], result: dict[str, Any], task: str, leader: bool = False) -> dict[str, Any]:
-    """Let the agent's own model explain rule-verified facts. It never supplies new numbers."""
-    mode = state.get("llm_mode", "off")
-    assigned = who.get("model")
-    result["model"] = {"assigned": assigned, "used": None}
+def done(result: dict[str, Any]) -> dict[str, Any]:
+    """Code tools only count and check; the department's CrewAI agent does the judging (crew.py)."""
     result["facts"] = result["summary"]
-    if state.get("purpose") != "briefing" or mode in ("off", "director") or (mode == "leaders" and not leader):
-        return result
-    model = resolve_model(assigned, state)
-    farm = state["farm"]
-    prompt = (
-        f"Farm: {farm['name']} — {farm['crop']} ({farm['system']}), {farm['location']}.\n"
-        f"Snapshot: {state['reading'].get('timestamp')}\n"
-        f"{installed_sensors(state)}\n"
-        f"Verified facts (do not invent numbers):\n{result['summary']}\n\n{task}"
-    )
-    text = llm.chat(model, who.get("prompt") or f"You are the {who['name']}.", prompt)
-    if text:
-        result["summary"] = text
-        result["model"]["used"] = model
     return result
+
+
+def profile_for(state: dict[str, Any]) -> dict[str, Any]:
+    """The crop profile, with the ranges currently in force (the latest plan version) replacing the crop's
+    ideal band where the plan sets one, so code tools check readings against what the master enforces."""
+    profile = crop_profile(state["farm"]["crop"])
+    ranges, acceptable = state.get("ranges_override") or {}, state.get("acceptable_override") or {}
+    if not ranges and not acceptable:
+        return profile
+    return {**profile, "ranges": {**profile["ranges"], **ranges},
+            "acceptable": {**profile.get("acceptable", {}), **acceptable}}   # the hard limits count as "tolerated"

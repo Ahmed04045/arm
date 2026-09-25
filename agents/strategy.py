@@ -1,8 +1,8 @@
-"""Market & Strategy department: runs only in briefings (twice a day, or when the farmer asks).
+"""Market & Strategy (an extra department, advice only): code tools for prices, crop fit and profitability.
 
-These agents look beyond today's readings: local prices, which crops fit this greenhouse in each season,
-and which changes would raise gross revenue. Their output is advice (kind "insight"). It never changes
-the status, the LEDs or the action plan.
+These look beyond today's readings: local prices (Qatar Open Data and the farm's price table), which crops
+fit these beds in each season, and which changes would raise gross revenue. Their output is advice; it
+never changes a range.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ import llm
 import market
 from knowledge import CANDIDATE_CROPS
 
-from .base import narrate, resolve_model
+from .base import done, resolve_model
 
 MONTHS = market.MONTHS
 SEASONS = {"Winter (Dec–Feb)": [11, 0, 1], "Spring (Mar–May)": [2, 3, 4],
@@ -46,7 +46,7 @@ def price_per_kg(crop: str, table: dict[str, Any]) -> tuple[float | None, str, s
 
 
 def indoor_climate(state: dict[str, Any]) -> dict[str, float]:
-    """Mean daily max/min air temperature and humidity this greenhouse has actually had."""
+    """Mean daily max/min air temperature and humidity these beds have actually had."""
     rows = state.get("archive") or state.get("history") or [state["reading"]]
     days: dict[str, list[float]] = {}
     for r in rows:
@@ -148,7 +148,7 @@ def market_watch(agent: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]
         lines.append(f"No published price for {state['farm']['crop']}: enter your buyer's price in farms/market_prices.json.")
     result = {"status": "OK", "summary": " ".join(l for l in lines if l), "issues": [],
               "data_age": summary["fetched_at"], "sources": [summary["source"], "farms/market_prices.json"]}
-    return narrate(agent, state, result, "In 2 sentences, tell the farmer what the local market looks like for them.")
+    return done(result)
 
 
 def crop_fit(agent: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
@@ -156,12 +156,12 @@ def crop_fit(agent: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     here = indoor_climate(state)
     month = MONTHS[datetime.fromisoformat(str(state["reading"]["timestamp"])).month - 1]
     now_fit = [r["name"] for r in rows if r["fits"][month] >= 0.5]
-    lines = [f"This greenhouse has averaged {here['tmax']}°C by day and {here['tmin']}°C by night over {here['days']} day(s).",
+    lines = [f"These beds have averaged {here['tmax']}°C by day and {here['tmin']}°C by night over {here['days']} day(s).",
              f"Crops that fit {month}: {', '.join(now_fit) or 'none of the candidates'}."]
     lines += [f"{r['name']}: {r['window']}" for r in rows]
     result = {"status": "OK", "summary": " ".join(lines[:2]) + " Seasons: " + "; ".join(lines[2:]) + ".", "issues": [],
               "table": [{k: r[k] for k in ("crop", "name", "window", "fits")} for r in rows]}
-    return narrate(agent, state, result, "In 2 sentences, say which crops suit this greenhouse now and in the coming season.")
+    return done(result)
 
 
 def profitability(agent: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
@@ -234,7 +234,7 @@ def profitability(agent: dict[str, Any], state: dict[str, Any]) -> dict[str, Any
               "beats_current_yearly": beats,
               "ranking": [{k: r[k] for k in ("name", "annual_qr_m2", "price", "price_basis", "confidence", "window")}
                           for r in sorted(rows, key=lambda r: -r["annual_qr_m2"])]}
-    return narrate(agent, state, result, "In 2-3 sentences, recommend the most promising change and say how confident the numbers are.")
+    return done(result)
 
 
 def _tavily(query: str) -> dict[str, Any] | None:

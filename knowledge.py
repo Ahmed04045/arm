@@ -15,7 +15,7 @@ SENSORS: dict[str, dict] = {
     "water_temperature": {"fields": ["water_temperature"]},
     "soil_ph":           {"fields": ["soil_ph"]},
     "soil_composition":  {"fields": ["nitrogen", "phosphorus", "potassium", "soil_ec"]},
-    # EZFarm Nano node sensors (converted from raw ADC by the bridge, see farms/ezfarm_site.json)
+    # sensor-set sensors on soil beds (Hydro Monitor plan 2.1)
     "soil_moisture":     {"fields": ["soil_moisture"]},
     "water_level":       {"fields": ["water_level"]},
     "air_quality":       {"fields": ["air_quality"]},
@@ -121,6 +121,39 @@ ACTIONS = {
     ("potassium", "low"): ("Fertigate with potassium sulphate", "FERTILIZE"),
     ("soil_ec", "high"): ("Leach the beds with low-salinity water; stop using the brackish well", "LEACH"),
 }
+
+
+# ── Hydro Monitor plan: log "kind" names <-> the field names the code tools use ──
+# (plan 2.4: kind is what was measured; device_id is the sensor on the module)
+KIND_FIELD = {"temp_air": "air_temperature", "humidity": "humidity", "soil_moisture": "soil_moisture",
+              "light": "light", "level": "water_level", "air_quality": "air_quality",
+              "soil_ec": "soil_ec", "soil_ph": "soil_ph", "water_temp": "water_temperature"}
+FIELD_KIND = {v: k for k, v in KIND_FIELD.items()}
+KIND_DEVICE = {"temp_air": "dht11", "humidity": "dht11", "soil_moisture": "soil", "light": "light",
+               "level": "level", "air_quality": "mq135"}
+KIND_UNIT = {"temp_air": "C", "humidity": "%", "soil_moisture": "%", "light": "lux", "level": "%", "air_quality": ""}
+# the settings a ranges file can hold (plan 2.5): [min, max] bands plus the pump run per command
+RANGE_KINDS = ["soil_moisture", "temp_air", "humidity", "level"]
+
+# ── Crop file: growth stages, hard limits and starting ranges (plan 3.2, 6.2) ──
+# Hard limits are fixed at onboarding and never crossed by an agent plan; the starting ranges are version 1.
+CROP_FILE: dict[str, dict] = {
+    "purple_amaranth": {
+        "stages": [(0, 14, "seedling"), (14, 30, "leafy growth"), (30, 45, "harvest window"), (45, 10_000, "late: bolting risk")],
+        "hard": {"soil_moisture": [25, 55], "temp_air": [15, 32], "humidity": [35, 85], "level": [15, 100],
+                 "pump_seconds": [10, 300]},
+        "start": {"soil_moisture": [30, 45], "temp_air": [24, 32], "humidity": [40, 80], "level": [20, 100],
+                  "pump_seconds": 120},
+        "notes": {"temp_air": "alert above 32 °C", "level": "block the pump below 15 %, alert below 20 %",
+                  "pump_seconds": "at most 300 s per command"},
+        "source": "Hydro Monitor plan 6.2 (illustrative values) and the team's A. cruentus research",
+    },
+}
+
+
+def growth_stage(crop: str | None, days: int) -> str:
+    stages = CROP_FILE.get((crop or "").lower().replace(" ", "_"), {}).get("stages", [])
+    return next((name for lo, hi, name in stages if lo <= days < hi), "unknown stage")
 
 
 def crop_profile(crop: str | None) -> dict:

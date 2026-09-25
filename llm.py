@@ -55,6 +55,12 @@ PROVIDERS: dict[str, dict[str, Any]] = {
                    "per_minute": 1000, "per_day": 100000, "day_env": None},
 }
 
+OPENROUTER_FALLBACKS = [
+    "qwen/qwen3.8-27b:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "dots-studio/dots-3-note-preview:free",
+]
+
 
 class _Budget:
     """Per-provider request limiter: spaces calls to the per-minute limit and stops at the daily cap."""
@@ -90,8 +96,14 @@ class _Budget:
 budget = _Budget()
 
 
+def local_name(model: str) -> str:
+    """CrewAI-style 'ollama/gemma2:2b' (as in the network definitions) -> the Ollama name 'gemma2:2b'."""
+    return model[len("ollama/"):] if model.startswith("ollama/") else model
+
+
 def split(model: str) -> tuple[str, str]:
-    """'openrouter:qwen/qwen3.8-27b:free' -> ('openrouter', 'qwen/qwen3.8-27b:free'); plain names -> ('ollama', name)."""
+    """'openrouter:qwen/qwen3.8-27b:free' -> ('openrouter', 'qwen/qwen3.8-27b:free'); plain or 'ollama/' names -> ('ollama', name)."""
+    model = local_name(model)
     prefix, _, rest = model.partition(":")
     return (prefix, rest) if prefix in PROVIDERS and rest else ("ollama", model)
 
@@ -119,7 +131,15 @@ def _cloud_chat(provider: str, model: str, messages: list[dict], as_json: bool, 
     if not budget.take(provider):
         log.warning("%s daily request budget used up; keeping rule-based text", provider)
         return None
-    body: dict[str, Any] = {"model": model, "messages": messages, "temperature": temperature, "max_tokens": 700}
+    candidates = [model]
+    if provider == "openrouter":
+        candidates = [model, *[candidate for candidate in OPENROUTER_FALLBACKS if candidate != model]]
+        candidates = candidates[:3]
+    body: dict[str, Any] = {"messages": messages, "temperature": temperature, "max_tokens": 700}
+    if provider == "openrouter":
+        body["models"] = candidates
+    else:
+        body["model"] = candidates[0]
     if as_json:
         body["response_format"] = {"type": "json_object"}
     headers = {"Content-Type": "application/json"}
@@ -127,23 +147,30 @@ def _cloud_chat(provider: str, model: str, messages: list[dict], as_json: bool, 
         headers["Authorization"] = f"Bearer {os.environ[cfg['key_env']]}"
     if provider == "openrouter":
         headers["X-Title"] = "QU-ARS amaranth agent network"
-    for attempt in (1, 2):
-        request = urllib.request.Request(f"{cfg['base_url']}/chat/completions", json.dumps(body).encode(), headers)
-        try:
-            with urllib.request.urlopen(request, timeout=TIMEOUT_S) as response:
-                data = json.loads(response.read())
-            text = (data["choices"][0]["message"].get("content") or "").strip()
-            return _extract_json(text) if as_json else text
-        except urllib.error.HTTPError as err:
-            detail = err.read()[:200].decode(errors="replace")
-            if err.code == 400 and "response_format" in body and attempt == 1:
-                body.pop("response_format")  # no JSON mode on this model: ask again and pull the JSON out of the text
-                continue
-            log.warning("%s %s -> HTTP %s %s", provider, model, err.code, detail)
-            return None
-        except Exception as err:
-            log.warning("%s %s failed: %s", provider, model, err)
-            return None
+    for attempt in range(3):
+        for json_attempt in (1, 2):
+            request = urllib.request.Request(f"{cfg['base_url']}/chat/completions", json.dumps(body).encode(), headers)
+            try:
+                with urllib.request.urlopen(request, timeout=TIMEOUT_S) as response:
+                    data = json.loads(response.read())
+                text = (data["choices"][0]["message"].get("content") or "").strip()
+                return _extract_json(text) if as_json else text
+            except urllib.error.HTTPError as err:
+                detail = err.read()[:200].decode(errors="replace")
+                if err.code == 400 and "response_format" in body and json_attempt == 1:
+                    body.pop("response_format")  # some models do not support JSON mode
+                    continue
+                retryable = provider == "openrouter" and err.code in (429, 500, 502, 503, 504)
+                if retryable and attempt < 2:
+                    delay = 2 ** (attempt + 1)
+                    log.warning("%s fallback chain -> HTTP %s; retrying in %ss", provider, err.code, delay)
+                    time.sleep(delay)
+                    break
+                log.warning("%s -> HTTP %s %s", provider, err.code, detail)
+                return None
+            except Exception as err:
+                log.warning("%s request failed: %s", provider, err)
+                return None
     return None
 
 

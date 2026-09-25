@@ -5,9 +5,9 @@ from __future__ import annotations
 from statistics import mean, pstdev
 from typing import Any
 
-from knowledge import DIURNAL, LABELS, crop_profile, fmt
+from knowledge import DIURNAL, LABELS, fmt
 
-from .base import finding, narrate
+from .base import finding, done, profile_for
 
 TREND_SHARE = 0.25    # change across the window, as a share of the optimal band...
 EDGE_SHARE = 0.15     # ...that pushes the reading into the outer 15% of the band
@@ -23,7 +23,7 @@ def _steps(minutes: float, state: dict[str, Any]) -> int:
 
 
 def _fields(agent: dict[str, Any], state: dict[str, Any]) -> list[tuple[str, tuple[float, float]]]:
-    ranges = crop_profile(state["farm"]["crop"])["ranges"]
+    ranges = profile_for(state)["ranges"]
     wanted = agent["inputs"]
     return [(f, ranges[f]) for f in wanted if f in ranges and f not in DIURNAL]
 
@@ -49,7 +49,7 @@ def trend(agent: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
             issues.append({"kind": "trend", "field": field, "direction": "high" if delta > 0 else "low", "severity": "WARNING",
                            "message": f"{LABELS[field]} {'rose' if delta > 0 else 'fell'} {fmt(field, round(abs(delta), 2))} over the last {_hours(len(series) - 1, state)} h"})
     result = finding(agent, issues, f"No worrying trends across {len(history)} recent readings.")
-    return narrate(agent, state, result, "In 2 short sentences, describe how conditions are moving.")
+    return done(result)
 
 
 def anomaly(agent: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
@@ -65,7 +65,7 @@ def anomaly(agent: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
             issues.append({"kind": "anomaly", "field": field, "direction": "high" if z > 0 else "low", "severity": "WARNING",
                            "message": f"{LABELS[field]} anomaly: {fmt(field, current)} vs. {fmt(field, round(baseline, 2))} baseline ({z:+.1f}σ)"})
     result = finding(agent, issues, "No sudden jumps against the recent baseline.")
-    return narrate(agent, state, result, "In 2 short sentences, say whether any reading looks like a fault or a real event.")
+    return done(result)
 
 
 def forecast(agent: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
@@ -100,4 +100,4 @@ def forecast(agent: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
                                    "message": f"{LABELS[field]} projected to cross {fmt(field, edge)} in ~{_hours(k, state)} h (now {fmt(field, current)})"})
                     break
     result = finding(agent, issues, "No threshold breaches projected in the next 6 h.")
-    return narrate(agent, state, result, "In 2 short sentences, warn the team about what is likely to happen next.")
+    return done(result)
