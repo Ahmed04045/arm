@@ -177,26 +177,52 @@ def fmt(field: str, value: float) -> str:
 
 
 # ── Candidate crops for the Market & Strategy department ─────────────────
-# air / rh: (ideal low, ideal high, acceptable low, acceptable high), copied from the team's
-# finetuning.py crop profiles (red amaranth from the team's A. cruentus research; the rest are
-# general hydroponic grower-guide values). yield_t_ha: Qatar Open Data per-season yields where
-# published (open field 2025 or greenhouse 2025); cycle_days: general grower guide.
+# air / rh: (ideal low, ideal high, acceptable low, acceptable high). Amaranth from the team's A. cruentus
+# research; lettuce to sweet pepper from the team's finetuning.py crop profiles; the Gulf field crops
+# (okra onward) are general grower-guide values. yield_t_ha: Qatar Open Data per-season yields (greenhouse 2025
+# where greenhouse-grown in Qatar, else open field 2025); yield_open_t_ha: the open-field figure, used for open-air
+# beds. cycle_days: days to first harvest (general guide). water / care: rough guides for advice, not for control.
+_OPEN = "Qatar Open Data, open field 2025"
 CANDIDATE_CROPS: dict[str, dict] = {
-    "purple_amaranth": {"name": "Purple amaranth", "air": (22, 30, 10, 40), "rh": (58, 72, 37, 78),
+    "purple_amaranth": {"name": "Purple amaranth", "ar": "قطيفة حمراء", "air": (22, 30, 10, 40), "rh": (58, 72, 37, 78),
                         "yield_t_ha": 20.0, "yield_source": "estimate (leaf amaranth literature 15-30 t/ha); no Qatar data",
-                        "cycle_days": 35},
-    "lettuce": {"name": "Lettuce", "air": (16, 24, 7, 29), "rh": (50, 70, 40, 80),
-                "yield_t_ha": 22.6, "yield_source": "Qatar Open Data, open field 2025", "cycle_days": 55},
-    "spinach": {"name": "Spinach", "air": (15, 22, 7, 27), "rh": (50, 70, 40, 80),
-                "yield_t_ha": 21.8, "yield_source": "Qatar Open Data, open field 2025", "cycle_days": 45},
-    "parsley": {"name": "Parsley", "air": (16, 24, 7, 29), "rh": (50, 70, 40, 80),
-                "yield_t_ha": 16.5, "yield_source": "Qatar Open Data, open field 2025", "cycle_days": 75},
-    "swiss_chard": {"name": "Swiss chard", "air": (16, 24, 7, 29), "rh": (50, 70, 40, 80),
-                    "yield_t_ha": 21.9, "yield_source": "Qatar Open Data, open field 2025 (chard)", "cycle_days": 60},
-    "tomato": {"name": "Tomato", "air": (21, 27, 13, 32), "rh": (60, 80, 50, 85),
-               "yield_t_ha": 96.5, "yield_source": "Qatar Open Data, greenhouse 2025", "cycle_days": 150},
-    "cucumber": {"name": "Cucumber", "air": (22, 28, 16, 33), "rh": (60, 80, 50, 85),
-                 "yield_t_ha": 64.9, "yield_source": "Qatar Open Data, greenhouse 2025", "cycle_days": 90},
-    "sweet_pepper": {"name": "Sweet pepper", "air": (21, 27, 15, 32), "rh": (60, 75, 50, 85),
-                     "yield_t_ha": 49.2, "yield_source": "Qatar Open Data, greenhouse 2025", "cycle_days": 150},
+                        "cycle_days": 35, "water": "medium", "care": "easy"},
+    "lettuce": {"name": "Lettuce", "ar": "خس", "air": (16, 24, 7, 29), "rh": (50, 70, 40, 80),
+                "yield_t_ha": 22.6, "yield_source": _OPEN, "cycle_days": 55, "water": "medium", "care": "easy"},
+    "spinach": {"name": "Spinach", "ar": "سبانخ", "air": (15, 22, 7, 27), "rh": (50, 70, 40, 80),
+                "yield_t_ha": 21.8, "yield_source": _OPEN, "cycle_days": 45, "water": "medium", "care": "easy"},
+    "parsley": {"name": "Parsley", "ar": "بقدونس", "air": (16, 24, 7, 29), "rh": (50, 70, 40, 80),
+                "yield_t_ha": 16.5, "yield_source": _OPEN, "cycle_days": 75, "water": "medium", "care": "easy"},
+    "swiss_chard": {"name": "Swiss chard", "ar": "سلق", "air": (16, 24, 7, 29), "rh": (50, 70, 40, 80),
+                    "yield_t_ha": 21.9, "yield_source": _OPEN + " (chard)", "cycle_days": 60, "water": "medium", "care": "easy"},
+    "tomato": {"name": "Tomato", "ar": "طماطم", "air": (21, 27, 13, 32), "rh": (60, 80, 50, 85),
+               "yield_t_ha": 96.5, "yield_open_t_ha": 50.7, "yield_source": "Qatar Open Data, greenhouse / open field 2025",
+               "cycle_days": 110, "water": "high", "care": "hard"},
+    "cucumber": {"name": "Cucumber", "ar": "خيار", "air": (22, 28, 16, 33), "rh": (60, 80, 50, 85),
+                 "yield_t_ha": 64.9, "yield_open_t_ha": 24.0, "yield_source": "Qatar Open Data, greenhouse 2025 (open field: snake cucumber)",
+                 "cycle_days": 60, "water": "high", "care": "medium"},
+    "sweet_pepper": {"name": "Sweet pepper", "ar": "فلفل حلو", "air": (21, 27, 15, 32), "rh": (60, 75, 50, 85),
+                     "yield_t_ha": 49.2, "yield_open_t_ha": 30.4, "yield_source": "Qatar Open Data, greenhouse / open field 2025",
+                     "cycle_days": 90, "water": "high", "care": "medium"},
+    # Gulf field crops: heat-tolerant summer crops and cool-season winter crops
+    "okra": {"name": "Okra", "ar": "بامية", "air": (24, 32, 18, 42), "rh": (40, 70, 20, 85),
+             "yield_t_ha": 8.6, "yield_source": _OPEN, "cycle_days": 55, "water": "medium", "care": "easy"},
+    "mallow": {"name": "Mulukhiyah (jute mallow)", "ar": "ملوخية", "air": (25, 34, 18, 42), "rh": (40, 75, 20, 85),
+               "yield_t_ha": 17.1, "yield_source": _OPEN + " (mallow)", "cycle_days": 45, "water": "medium", "care": "easy"},
+    "eggplant": {"name": "Eggplant", "ar": "باذنجان", "air": (22, 30, 15, 38), "rh": (50, 70, 30, 85),
+                 "yield_t_ha": 34.3, "yield_source": _OPEN, "cycle_days": 80, "water": "medium", "care": "medium"},
+    "snake_cucumber": {"name": "Snake cucumber", "ar": "قثاء", "air": (24, 32, 18, 38), "rh": (45, 75, 25, 85),
+                       "yield_t_ha": 24.0, "yield_source": _OPEN, "cycle_days": 55, "water": "medium", "care": "easy"},
+    "zucchini": {"name": "Zucchini", "ar": "كوسا", "air": (18, 27, 10, 35), "rh": (50, 75, 35, 85),
+                 "yield_t_ha": 22.6, "yield_source": _OPEN, "cycle_days": 50, "water": "medium", "care": "easy"},
+    "watermelon": {"name": "Watermelon", "ar": "بطيخ", "air": (22, 32, 18, 38), "rh": (40, 70, 25, 85),
+                   "yield_t_ha": 17.2, "yield_source": _OPEN, "cycle_days": 85, "water": "high", "care": "medium"},
+    "radish": {"name": "Radish", "ar": "فجل", "air": (10, 22, 5, 28), "rh": (50, 80, 35, 90),
+               "yield_t_ha": 27.0, "yield_source": _OPEN, "cycle_days": 30, "water": "low", "care": "easy"},
+    "cabbage": {"name": "Cabbage", "ar": "ملفوف", "air": (15, 22, 7, 28), "rh": (60, 85, 40, 90),
+                "yield_t_ha": 30.9, "yield_source": _OPEN, "cycle_days": 85, "water": "medium", "care": "medium"},
+    "carrot": {"name": "Carrot", "ar": "جزر", "air": (15, 22, 7, 28), "rh": (55, 80, 40, 90),
+               "yield_t_ha": 23.9, "yield_source": _OPEN, "cycle_days": 80, "water": "medium", "care": "medium"},
+    "onion": {"name": "Onion", "ar": "بصل", "air": (13, 24, 7, 30), "rh": (50, 75, 35, 85),
+              "yield_t_ha": 27.1, "yield_source": _OPEN + " (dry onion)", "cycle_days": 120, "water": "low", "care": "easy"},
 }

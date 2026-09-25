@@ -55,6 +55,8 @@ PROVIDERS: dict[str, dict[str, Any]] = {
                    "per_minute": 1000, "per_day": 100000, "day_env": None},
 }
 
+CLOUD_MAX_TOKENS = 4000   # room for reasoning models to think and still answer (they bill output tokens only)
+
 OPENROUTER_FALLBACKS = [
     "qwen/qwen3.8-27b:free",
     "nvidia/nemotron-3-super-120b-a12b:free",
@@ -135,9 +137,10 @@ def _cloud_chat(provider: str, model: str, messages: list[dict], as_json: bool, 
     if provider == "openrouter":
         candidates = [model, *[candidate for candidate in OPENROUTER_FALLBACKS if candidate != model]]
         candidates = candidates[:3]
-    body: dict[str, Any] = {"messages": messages, "temperature": temperature, "max_tokens": 700}
+    body: dict[str, Any] = {"messages": messages, "temperature": temperature, "max_tokens": CLOUD_MAX_TOKENS}
     if provider == "openrouter":
         body["models"] = candidates
+        body["reasoning"] = {"effort": "low"}   # free models are often reasoning models: keep the thinking short
     else:
         body["model"] = candidates[0]
     if as_json:
@@ -204,6 +207,11 @@ def chat_json(model: str, system: str, prompt: str, temperature: float = 0.2) ->
 def load_routes(path: str = os.path.join(ROOT, "farms", "model_routes.json")) -> dict[str, dict[str, Any]]:
     with open(path, encoding="utf-8") as f:
         return {k: v for k, v in json.load(f).items() if not k.startswith("_")}
+
+
+def default_route() -> str:
+    """The first route in farms/model_routes.json is the default (OpenRouter)."""
+    return next(iter(load_routes()))
 
 
 def available_models() -> list[str]:

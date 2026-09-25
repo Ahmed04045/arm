@@ -32,7 +32,7 @@ log = logging.getLogger("server")
 app = FastAPI(title="Hydro Monitor farm computer")
 con = db.connect()
 _run_lock = threading.Lock()
-SETTINGS: dict[str, Any] = {"every_hours": 6, "route": "local"}
+SETTINGS: dict[str, Any] = {"every_hours": 6, "route": None}   # None: the default route
 
 
 def _start_run(trigger: str) -> bool:
@@ -116,7 +116,7 @@ def main() -> None:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--every", type=float, default=6, help="hours between scheduled agent runs (0 = off)")
-    parser.add_argument("--route", default="local", help="model route from farms/model_routes.json")
+    parser.add_argument("--route", default=None, help="model route (default: the first in farms/model_routes.json)")
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
     SETTINGS.update(every_hours=args.every, route=args.route)

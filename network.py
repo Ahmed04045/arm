@@ -63,7 +63,8 @@ def code_tools(farm: dict[str, Any], summary: dict[str, Any], current: dict[str,
         if not history:
             continue
         state = {
-            "farm": {"crop": farm["profile"]["crop"], "name": farm["profile"]["name"], "fertilizer": farm["profile"].get("fertilizer")},
+            "farm": {"crop": farm["profile"]["crop"], "name": farm["profile"]["name"], "fertilizer": farm["profile"].get("fertilizer"),
+                     "profile": farm["profile"]},
             "reading": history[-1], "history": history, "archive": summary["archive"][field_id],
             "interval_minutes": summariser.STEP_MIN, "summary": summary["fields"][field_id],
             "field": field_info(farm, field_id),
@@ -211,7 +212,7 @@ WATERING = ("How the ranges work: the master waters a bed when its soil moisture
             "when an alert fires; change them only if a report asks for it.")
 
 
-def suggested_todos(summary: dict[str, Any]) -> list[str]:
+def suggested_todos(summary: dict[str, Any], crops: dict[str, Any] | None = None) -> list[str]:
     """Candidate to-dos computed by code from the facts; the Director keeps the ones that fit."""
     todos, fields = [], summary["fields"]
     fc = next((s["forecast_today"] for s in fields.values() if s.get("forecast_today")), None)
@@ -227,11 +228,23 @@ def suggested_todos(summary: dict[str, Any]) -> list[str]:
             todos.append(f"Send a photo of {f}: '{note}'")
         if s.get("level") and s["level"]["now"] < 30:
             todos.append(f"Refill the tank (now {s['level']['now']} %)")
+    choices: dict[str, list[str]] = {}   # beds with the same best crop share one to-do
+    best_row: dict[str, dict[str, Any]] = {}
+    for field_id, f in ((crops or {}).get("fields") or {}).items():
+        if f.get("current_crop") in (None, "", "undecided") and f.get("now"):
+            best = f["now"][0]
+            choices.setdefault(best["crop"], []).append(field_id)
+            best_row[best["crop"]] = best
+    for crop, fields in choices.items():
+        best = best_row[crop]
+        alt = next((f["now"][1]["name"] for f in crops["fields"].values() if len(f.get("now", [])) > 1), None)
+        todos.append(f"Choose a crop for {' and '.join(fields)}: {best['name']} fits now (ready in about {best['days']} days, "
+                     f"{best['water']} water, {best['confidence']} price)" + (f"; {alt} is the next best" if alt else ""))
     return todos
 
 
 def director_brief(farm: dict[str, Any], summary: dict[str, Any], version: int, current: dict[str, dict[str, Any]],
-                   reports: dict[str, dict[str, Any]]) -> str:
+                   reports: dict[str, dict[str, Any]], crops: dict[str, Any] | None = None) -> str:
     hard = farm["limits"]["hard"]
     fields = field_kinds(farm["hardware"])
     lines = [f"Farm: {farm['profile']['name']}; {farm['profile']['crop']}; local time {summary['now']}.",
@@ -242,7 +255,7 @@ def director_brief(farm: dict[str, Any], summary: dict[str, Any], version: int, 
     lines.append("Key facts (code):")
     lines += [f"- {fact}" for fact in key_facts(farm, summary)]
     lines.append(capabilities(farm))
-    todos = suggested_todos(summary)
+    todos = suggested_todos(summary, crops)
     if todos:
         lines.append("Suggested to-dos from the code tools (keep the ones the reports support, reword freely):")
         lines += [f"- {t}" for t in todos]
@@ -250,14 +263,20 @@ def director_brief(farm: dict[str, Any], summary: dict[str, Any], version: int, 
     lines += [f"- {digest(r)}" for r in reports.values() if not r.get("advice_only")]
     advice = [r for r in reports.values() if r.get("advice_only")]
     if advice:
-        lines.append("Market advice (optional, never changes a range): " + advice[0]["summary"])
+        lines.append("Market and crop advice (optional, never changes a range): " + advice[0]["summary"])
+    if crops and any(f.get("current_crop") in (None, "", "undecided") for f in crops["fields"].values()):
+        import crop_advice
+
+        lines.append("No crop is chosen yet on some beds. Crop suggestions (code): " + crop_advice.summary_text(crops)
+                     + " Make choosing and planting a crop the first to-do, naming the best option and why.")
     lines.append(
         "Write the plan. changes: only settings that should change today, each with a reason from the reports "
         "(for example a narrower soil moisture band for a bed that dries fast, or a longer pump run in a heatwave); "
         "leave it empty if nothing should change, and never widen a range to the hard limits just because you can. "
         "message: to the farmer, as 'you', at most 4 plain sentences: today's main risk with its number and time, what "
         "the system will do, and what they should do. todos: concrete tasks for the farmer (not for the system), most "
-        "urgent first, for example shade cloth at the hottest hours, checking a drip line, sending a photo.")
+        "urgent first, for example shade cloth at the hottest hours, checking a drip line, sending a photo. "
+        "Write the message and the to-dos in English, once: the system translates them into Arabic.")
     return "\n".join(lines)
 
 
@@ -286,7 +305,7 @@ def fallback_report(dept_id: str, tools: dict[str, Any]) -> dict[str, Any]:
 
 
 # ── the run ──────────────────────────────────────────────────────────────
-def run(con=None, farm_id: str | None = None, trigger: str = "button", route: str = "local",
+def run(con=None, farm_id: str | None = None, trigger: str = "button", route: str | None = None,
         progress: Callable[[str], None] | None = None, translate: bool = True) -> dict[str, Any]:
     """Run once. Returns {'status': 'ok'|'failed', 'plan'?, 'error'?, ...}. Never raises."""
     con = con or db.connect()
@@ -307,7 +326,8 @@ def run(con=None, farm_id: str | None = None, trigger: str = "button", route: st
         tools = code_tools(farm, summary, current, groups)
 
         routes = llm.load_routes()
-        chosen = routes.get(route, routes["local"])
+        route = route if route in routes else llm.default_route()
+        chosen = routes[route]
         state = {"installed_models": llm.available_models(), "fallback_model": chosen["fallback"], "model_map": chosen["map"]}
         models = {d["id"]: resolve_model(d["agent"]["llm"], state) for d in groups}
         models["director"] = resolve_model(net["director"]["agent"]["llm"], state)
@@ -339,8 +359,11 @@ def run(con=None, farm_id: str | None = None, trigger: str = "button", route: st
 
         languages = net["director"].get("languages", [])
         step("Stage 3: Farm Director writes the plan" + (" and the Arabic message" if "ar" in languages else ""))
+        import crop_advice
+
+        crops = crop_advice.suggest(farm)
         plan, error = crew.run_director(net["director"], models["director"],
-                                        director_brief(farm, summary, version, current, reports))
+                                        director_brief(farm, summary, version, current, reports, crops))
         if not plan:
             raise RuntimeError(f"the Farm Director gave no usable plan ({error or 'invalid JSON'})")
         translation = crew.translate(plan["message"], plan["todos"], models["translator"]) if translate and "ar" in languages else None
@@ -349,8 +372,9 @@ def run(con=None, farm_id: str | None = None, trigger: str = "button", route: st
         proposed = apply_changes(current, plan["changes"])
         ranges, flags = checker.check(proposed, current, farm["limits"]["hard"], field_kinds(farm["hardware"]))
         valid_from = (local_now(farm) + timedelta(minutes=VALID_DELAY_MIN)).isoformat(timespec="seconds")
-        advice = [s for per in tools.get("market_strategy", {}).values() for f in per["specialists"].values()
-                  for s in f.get("suggestions", [])]
+        advice = {"market": [s for per in tools.get("market_strategy", {}).values() for f in per["specialists"].values()
+                             for s in f.get("suggestions", [])],
+                  "crops": crops}
         translation = translation or {}
         saved = db.save_plan(
             con, farm["id"], valid_from, ranges, proposed=proposed, flags=flags, message_en=plan["message"],
@@ -370,7 +394,7 @@ def run(con=None, farm_id: str | None = None, trigger: str = "button", route: st
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--route", default="local")
+    parser.add_argument("--route", default=None, help="model route (default: the first in farms/model_routes.json)")
     parser.add_argument("--no-arabic", action="store_true")
     args = parser.parse_args()
     logging.basicConfig(level=logging.WARNING, format="%(message)s")

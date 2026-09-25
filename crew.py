@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -63,7 +64,7 @@ class Change(BaseModel):
 
 class DirectorPlan(BaseModel):
     changes: list[Change] = Field(default_factory=list, description="only the settings that should change; empty keeps every range")
-    message: str = Field(description="to the farmer: at most 4 short, plain sentences")
+    message: str = Field(description="to the farmer, in English: at most 4 short, plain sentences")
     todos: list[str] = Field(description="concrete tasks for the farmer, most urgent first, at most 5")
 
 
@@ -82,11 +83,16 @@ def crew_llm(model: str, temperature: float = 0.2):
     """Our model names (llm.py) -> a CrewAI LLM. Every provider, Ollama included, speaks the OpenAI API."""
     provider, name = llm.split(model)
     if provider == "ollama":
-        base_url, key = f"{OLLAMA_URL}/v1", "ollama"
-    else:
-        cfg = llm.PROVIDERS[provider]
-        base_url, key = cfg["base_url"], os.environ.get(cfg["key_env"] or "", "ollama")
-    return LLM(model=f"openai/{name}", base_url=base_url, api_key=key, temperature=temperature, max_tokens=900)
+        return LLM(model=f"openai/{name}", base_url=f"{OLLAMA_URL}/v1", api_key="ollama", temperature=temperature, max_tokens=900)
+    cfg = llm.PROVIDERS[provider]
+    key = os.environ.get(cfg["key_env"] or "", "ollama")
+    extra = {}
+    if provider == "openrouter":
+        # free OpenRouter models are often reasoning models: without this they can spend the whole token budget
+        # thinking and never write the JSON (LengthFinishReasonError)
+        extra["extra_body"] = {"reasoning": {"effort": "low"}}
+    return LLM(model=f"openai/{name}", base_url=cfg["base_url"], api_key=key, temperature=temperature,
+               max_tokens=llm.CLOUD_MAX_TOKENS, **extra)
 
 
 def _agent(definition: dict[str, Any], model: str, temperature: float = 0.2) -> Agent:
@@ -98,6 +104,10 @@ def _safe(text: str) -> str:
     return text.replace("{", "(").replace("}", ")")   # CrewAI treats {name} in task text as a template slot
 
 
+RETRYABLE = ("429", "rate limit", "ratelimit", "502", "503", "504", "overloaded", "temporarily", "timeout",
+             "length limit", "lengthfinishreason")   # a model that ran out of tokens: try the next one
+
+
 def _kickoff(tasks: list[Task]) -> str | None:
     try:
         Crew(agents=[t.agent for t in tasks], tasks=tasks, process=Process.sequential, verbose=False).kickoff()
@@ -107,32 +117,71 @@ def _kickoff(tasks: list[Task]) -> str | None:
         return f"{type(err).__name__}: {err}"
 
 
+def _candidates(model: str) -> list[str]:
+    """The model, then (for OpenRouter) the configured open-weight fallbacks, like llm.py does for plain calls."""
+    provider, name = llm.split(model)
+    if provider != "openrouter":
+        return [model]
+    return [model] + [f"openrouter:{m}" for m in llm.OPENROUTER_FALLBACKS if m != name][:2]
+
+
+def _run_one(make_task, model: str) -> tuple[Task | None, str | None]:
+    """Build and run one task; on a rate limit or an overloaded provider, back off and try the next fallback model."""
+    error = None
+    for attempt, candidate in enumerate(_candidates(model)):
+        provider, _ = llm.split(candidate)
+        if provider != "ollama" and not llm.budget.take(provider):
+            return None, f"{provider} daily request budget used up"
+        task = make_task(candidate)
+        error = _kickoff([task])
+        if error is None and task.output is not None:
+            return task, None
+        if not error or not any(k in error.lower() for k in RETRYABLE):
+            return task, error or "no output"
+        wait = 4 * (attempt + 1)
+        log.warning("%s: %s; trying the next model in %ss", candidate, error[:80], wait)
+        time.sleep(wait)
+    return None, error
+
+
 def _parsed(task: Task | None) -> dict[str, Any] | None:
     out = task.output if task else None
     return out.pydantic.model_dump() if out is not None and out.pydantic is not None else None
 
 
 def run_departments(departments: list[dict[str, Any]], models: dict[str, str]) -> tuple[dict[str, Any], str | None]:
-    """departments: [{id, agent (definition), brief (task text), sets}]. One crew, one task each."""
-    tasks = {}
+    """departments: [{id, agent (definition), brief (task text), sets}]. One task each, run one after another."""
+    reports, errors = {}, []
     for dept in departments:
         sets = dept["sets"]
         expected = ("JSON department report. " + (f"You may change only: {', '.join(sets)}." if sets else
                                                   "You change no settings: leave 'ranges' and 'pump_seconds' empty."))
+
         # context=[]: in a sequential crew CrewAI otherwise hands every task the previous task's output, and small
         # models then copy that report instead of writing their own
-        tasks[dept["id"]] = Task(description=_safe(dept["brief"] + "\n\n" + REPORT_RULES), expected_output=expected,
-                                 agent=_agent(dept["agent"], models[dept["id"]]), output_pydantic=DepartmentReport,
-                                 context=[])
-    error = _kickoff(list(tasks.values()))
-    return {d: _parsed(t) for d, t in tasks.items()}, error
+        def make(model: str, dept=dept, expected=expected) -> Task:
+            return Task(description=_safe(dept["brief"] + "\n\n" + REPORT_RULES), expected_output=expected,
+                        agent=_agent(dept["agent"], model), output_pydantic=DepartmentReport, context=[])
+
+        task, error = _run_one(make, models[dept["id"]])
+        reports[dept["id"]] = _parsed(task)
+        if error:
+            errors.append(f"{dept['name']}: {error}")
+    return reports, "; ".join(errors) or None
 
 
 def run_director(director: dict[str, Any], model: str, brief: str) -> tuple[dict[str, Any] | None, str | None]:
-    plan_task = Task(description=_safe(brief), expected_output="JSON plan: changes, message, todos.",
-                     agent=_agent(director["agent"], model), output_pydantic=DirectorPlan, context=[])
-    error = _kickoff([plan_task])
-    return _parsed(plan_task), error
+    def make(m: str) -> Task:
+        return Task(description=_safe(brief), expected_output="JSON plan: changes, message, todos.",
+                    agent=_agent(director["agent"], m), output_pydantic=DirectorPlan, context=[])
+
+    task, error = _run_one(make, model)
+    return _parsed(task), error
+
+
+GLOSSARY = ("shade cloth = شبك التظليل; drip line = خط التنقيط; drip emitters = نقاطات الري; bed = حوض; "
+            "soil moisture = رطوبة التربة; tank = الخزان; pump = المضخة; fertilizer = السماد; harvest = الحصاد; "
+            "seedlings = الشتلات; pale leaves = أوراق باهتة")
 
 
 def _clean_arabic(text: str) -> bool:
@@ -144,15 +193,18 @@ def translate(message: str, todos: list[str], model: str, attempts: int = 2) -> 
     """The farmer's message and to-dos in Modern Standard Arabic, or None if no clean translation came back."""
     source = "Message: " + message + "\nTo-dos:\n" + "\n".join(f"{i + 1}. {t}" for i, t in enumerate(todos))
     for attempt in range(attempts):
-        task = Task(
-            description=_safe("Translate this farm advice into simple Modern Standard Arabic for the farmer. Write Arabic "
-                              "script only. Keep every number, unit, time and field name (F1, F2) exactly as written.\n\n" + source),
-            expected_output="JSON with message_ar and todos_ar (same order as the to-dos).",
-            agent=Agent(role="Translator for the farm messages", goal="Faithful, simple Arabic the farmer understands",
-                        backstory="You translate farm advice from English into clear Modern Standard Arabic.",
-                        llm=crew_llm(model, 0.1 if attempt == 0 else 0.0), allow_delegation=False, max_iter=2, verbose=False),
-            output_pydantic=Translation, context=[])
-        _kickoff([task])
+        def make(m: str, attempt=attempt) -> Task:
+            return Task(
+                description=_safe("Translate this farm advice into simple Modern Standard Arabic for the farmer. Write Arabic "
+                                  "script only. Keep every number, unit, time and field name (F1, F2) exactly as written.\n"
+                                  "Use these farming terms: " + GLOSSARY + "\n\n" + source),
+                expected_output="JSON with message_ar and todos_ar (same order as the to-dos).",
+                agent=Agent(role="Translator for the farm messages", goal="Faithful, simple Arabic the farmer understands",
+                            backstory="You translate farm advice from English into clear Modern Standard Arabic.",
+                            llm=crew_llm(m, 0.1 if attempt == 0 else 0.0), allow_delegation=False, max_iter=2, verbose=False),
+                output_pydantic=Translation, context=[])
+
+        task, _ = _run_one(make, model)
         out = _parsed(task)
         if out and _clean_arabic(out["message_ar"] + "".join(out["todos_ar"])):
             return out

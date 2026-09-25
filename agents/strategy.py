@@ -166,7 +166,21 @@ def crop_fit(agent: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
 
 def profitability(agent: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
     rows = crop_table(state)
-    current = next(r for r in rows if r["crop"] == _crop_key(state["farm"]))
+    crop_key = _crop_key(state["farm"])
+    current = next((r for r in rows if r["crop"] == crop_key), None)
+    if current is None:
+        crop_name = state["farm"].get("crop") or "the current crop"
+        result = {
+            "status": "INFO",
+            "summary": f"Profitability comparison is deferred because the farm crop is '{crop_name}', which is not yet mapped to a candidate crop profile.",
+            "issues": [],
+            "suggestions": [],
+            "seasons": [],
+            "beats_current_yearly": [],
+            "ranking": [{k: r[k] for k in ("name", "annual_qr_m2", "price", "price_basis", "confidence", "window")}
+                        for r in sorted(rows, key=lambda r: -r["annual_qr_m2"])],
+        }
+        return done(result)
     base = current["annual_qr_m2"] or 0.01
     # two-season rotation: keep the current crop in its best months, switch to ONE alternative in the rest
     best_alt, rotation_total, alt_months = None, base, []
@@ -296,3 +310,11 @@ def web_research(agent: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]
         if text:
             result["summary"], result["model"]["used"] = text, model
     return result
+
+
+def crop_suggest(agent: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    """Crop Suggestion (plan 3.3): what to plant in each bed now and in the coming months (crop_advice.py)."""
+    import crop_advice
+
+    advice = crop_advice.suggest({"profile": state["farm"]["profile"]})
+    return done({"status": "OK", "summary": crop_advice.summary_text(advice), "issues": [], "crops": advice})

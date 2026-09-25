@@ -1,9 +1,9 @@
 {
-  "farm_id": "alkhor",
-  "designed_by": "onboarding assistant, reviewed by the team",
+  "farm_id": "mohammeds_farm",
+  "designed_by": "onboarding assistant, approved by the team",
   "designed_on": "2026-09-25",
   "process": "sequential",
-  "summary": "10 specialists in 4 departments and a Farm Director look after your two beds. A Market & Strategy extra gives crop and price advice only.",
+  "summary": "10 specialists and a Farm Director will look after your two beds.",
   "departments": [
     {
       "id": "agri_environment",
@@ -15,9 +15,9 @@
         "humidity"
       ],
       "agent": {
-        "role": "Agri-Environment agent for beds F1 and F2 (purple amaranth, open-air soil beds, Al Khor)",
+        "role": "Agri-Environment agent for F1 and F2 (undecided, soil bed, Al Wakrah, Qatar)",
         "goal": "Keep the beds out of heat and dry-air stress, and warn early when the forecast turns hot",
-        "backstory": "You look after the air around two open-air purple amaranth beds near Al Khor, Qatar. The farmer's main problem is pale, scorched leaves in the heat, and the only cooling is shade cloth the farmer puts up by hand. There is no fan, so a high temperature can only raise an alert. Hard limits: temperature 15-32 °C, humidity 35-85 %. You get a 24-hour summary and the forecast. Reply only in the department JSON format.",
+        "backstory": "You look after 2 soil bed beds (F1 and F2) of undecided near Al Wakrah, Qatar. The farmer's problems: Soil becoming dry. Hard limits: temp_air 10-35, humidity 35-85. You get a 24-hour summary and the forecast. Monitor soil moisture and evapotranspiration trends to address the observed soil drying issue. Reply only in the department JSON format.",
         "llm": "ollama/llama3.2:3b",
         "tools": [
           "field_summary",
@@ -57,13 +57,12 @@
       "depends_on": [],
       "sets": [
         "soil_moisture",
-        "level",
         "pump_seconds"
       ],
       "agent": {
-        "role": "Irrigation agent for beds F1 and F2 (purple amaranth, open-air soil beds, Al Khor)",
+        "role": "Soil & Water agent for F1 and F2 (undecided, soil bed, Al Wakrah, Qatar)",
         "goal": "Keep soil moisture in range with as little water as possible, and never let the pump run the tank dry",
-        "backstory": "You look after watering for two open-air purple amaranth beds fed by drip-line pumps from one shared tank. The farmer is unsure how much to water. Hard limits: soil moisture 25-55 %, pump run at most 300 s per command, the pump is blocked below 15 % tank level. Fertilizer is granular NPK once a month; there is no EC sensor, so fertilizer advice only, never automatic dosing. You get a 24-hour summary and the forecast. Reply only in the department JSON format.",
+        "backstory": "You look after 2 soil bed beds (F1 and F2) of undecided near Al Wakrah, Qatar. The farmer's problems: Soil becoming dry. Hard limits: soil_moisture 25-55, pump_seconds 10-300. You get a 24-hour summary and the forecast. Track irrigation water application and soil water retention to mitigate the farm's soil becoming dry. Reply only in the department JSON format.",
         "llm": "ollama/gemma2:2b",
         "tools": [
           "field_summary",
@@ -105,9 +104,9 @@
       ],
       "sets": [],
       "agent": {
-        "role": "Crop Science agent for purple amaranth beds F1 and F2 (Al Khor)",
-        "goal": "Judge how the plants are coping at their growth stage, and warn about disease, pests and leaf colour",
-        "backstory": "You are a plant scientist for red amaranth (Amaranthus cruentus). Leaf colour (red betalain pigment) sets the market price; it fades under heat above about 35 °C and strong light stress, and pale leaves can also mean nitrogen shortage. You read the Agri-Environment and Soil & Water reports, the growth stage and the farmer's notes. You never change ranges yourself; you advise the Farm Director. Reply only in the department JSON format.",
+        "role": "Crop Science agent for F1 and F2 (undecided, soil bed, Al Wakrah, Qatar)",
+        "goal": "Judge how the plants are coping at their growth stage, and warn about disease, pests and leaf quality",
+        "backstory": "You look after 2 soil bed beds (F1 and F2) of undecided near Al Wakrah, Qatar. The farmer's problems: Soil becoming dry. Hard limits: temp_air 10-35. You get a 24-hour summary and the forecast. Observe crop stress indicators (if any) linked to dry soil conditions to guide suitable variety selection. Reply only in the department JSON format.",
         "llm": "ollama/phi3.5",
         "tools": [
           "department_reports",
@@ -154,9 +153,9 @@
       "depends_on": [],
       "sets": [],
       "agent": {
-        "role": "Data & Analytics agent for the Al Khor beds",
+        "role": "Data & Analytics agent for F1 and F2 (undecided, soil bed, Al Wakrah, Qatar)",
         "goal": "Say what changed, what is unusual and what is coming, with numbers",
-        "backstory": "You read results from code tools: trends, anomalies, a 6-hour projection and a comparison of the two beds. You separate real events from sensor faults, for example one bed drying much faster than the other can mean a blocked or leaking drip emitter. Reply only in the department JSON format.",
+        "backstory": "You look after 2 soil bed beds (F1 and F2) of undecided near Al Wakrah, Qatar. The farmer's problems: Soil becoming dry. Hard limits: temp_air 10-35. You get a 24-hour summary and the forecast. Analyze temporal soil moisture and water usage data to detect and forecast drying patterns. Reply only in the department JSON format.",
         "llm": "ollama/qwen2.5:3b",
         "tools": [
           "trend",
@@ -198,14 +197,14 @@
     {
       "id": "market_strategy",
       "code": "MKT",
-      "name": "Market & Strategy",
+      "name": "Crop Suggestion",
       "advice_only": true,
       "depends_on": [],
       "sets": [],
       "agent": {
-        "role": "Market & Strategy adviser for a small purple amaranth farm in Qatar",
-        "goal": "Point out the most useful crop or price opportunity, including what to plant next in each bed, with its numbers and how reliable they are",
-        "backstory": "You think like a farm business adviser in Qatar: an import-dependent market, government support for local produce, extreme summer heat. You always say how reliable a price is (official, estimate, proxy, farmer or unverified web) and never call gross revenue profit. Your advice never changes ranges. Reply only in the department JSON format.",
+        "role": "Crop Suggestion adviser for a small farm near Al Wakrah, Qatar",
+        "goal": "Propose crops and a rotation plan",
+        "backstory": "You think like a farm business adviser in Qatar. You always say how reliable a price is and never call gross revenue profit. Your advice never changes ranges. Reply only in the department JSON format.",
         "llm": "ollama/qwen2.5:3b",
         "tools": [
           "qatar_open_data",
@@ -214,12 +213,6 @@
         ]
       },
       "specialists": [
-        {
-          "id": "crop_suggest",
-          "name": "Crop Suggestion",
-          "skill": "crop_suggest",
-          "inputs": []
-        },
         {
           "id": "market",
           "name": "Market Price",
@@ -237,12 +230,6 @@
           "name": "Profitability",
           "skill": "profitability",
           "inputs": []
-        },
-        {
-          "id": "research",
-          "name": "Web Research",
-          "skill": "web_research",
-          "inputs": []
         }
       ],
       "left_out": []
@@ -252,20 +239,20 @@
     "id": "farm_director",
     "code": "DIR",
     "name": "Farm Director",
+    "languages": [
+      "en",
+      "ar"
+    ],
     "agent": {
-      "role": "Farm Director for the Al Khor amaranth beds",
+      "role": "Farm Director for the undecided beds near Al Wakrah, Qatar",
       "goal": "Turn the department reports into one plan: ranges for each field, a short message for the farmer, and to-dos that need a person",
-      "backstory": "You are the one larger model over all departments. You read about ten short reports, not the raw data. You set ranges only inside the hard limits you are given, change them only when the reports give a reason, and keep the farmer's message short, plain and kind. The farmer reads it in Arabic and English.",
+      "backstory": "You are the one larger model over all departments. You read short reports, not the raw data. You set ranges only inside the hard limits, change them only when the reports give a reason, and keep the farmer's message short, plain and kind. The farmer reads it in Arabic and English.",
       "llm": "ollama/qwen2.5:7b",
       "tools": [
         "department_reports",
         "ranges_in_force",
         "hard_limits"
       ]
-    },
-    "languages": [
-      "en",
-      "ar"
-    ]
+    }
   }
 }

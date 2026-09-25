@@ -1,0 +1,61 @@
+{
+  "farm_id": "mohammeds_farm",
+  "crop": "undecided",
+  "hard": {
+    "soil_moisture": [
+      25,
+      55
+    ],
+    "temp_air": [
+      10,
+      35
+    ],
+    "humidity": [
+      35,
+      85
+    ],
+    "level": [
+      15,
+      100
+    ],
+    "pump_seconds": [
+      10,
+      300
+    ]
+  },
+  "start": {
+    "F1": {
+      "soil_moisture": [
+        30,
+        45
+      ],
+      "temp_air": [
+        18,
+        30
+      ],
+      "humidity": [
+        50,
+        75
+      ],
+      "pump_seconds": 120
+    },
+    "F2": {
+      "soil_moisture": [
+        30,
+        45
+      ],
+      "temp_air": [
+        18,
+        30
+      ],
+      "humidity": [
+        50,
+        75
+      ],
+      "pump_seconds": 120
+    }
+  },
+  "notes": {
+    "crop": "no crop-file entry for 'undecided': general values, to be checked by the team"
+  }
+}

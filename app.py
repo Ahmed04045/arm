@@ -1,9 +1,11 @@
-"""Hydro Monitor dashboard (plan 5.2: Streamlit on the laptop, reading SQLite).
+"""Hydro Monitor dashboard (plan 5.2: Streamlit on the laptop, reading SQLite). Three pages:
 
-    Farm page        live readings, the agent network, "Run now", the Director's plan (ranges, clamped values,
-                     the farmer's message in Arabic and English, to-dos with Approve / Correct), farmer notes
-    Onboarding page  the onboarding assistant: a chat that produces the farm profile, hardware plan, hard limits
-                     and agent network for the team to approve
+    My farm          the farmer board, in Arabic or English: how each bed is doing in plain words, today's advice
+                     and to-dos (Done / Correct), what to plant now and in the coming months, notes, and a chat
+    Set up a farm    the onboarding assistant: a chat that produces the farm profile, hardware plan, hard limits,
+                     agent network and crop suggestions for the team to approve
+    Developer        everything technical: live rows, the agent network, Run now with progress, the Director's plan
+                     (ranges before / proposed / saved, clamped values), department reports, the summariser's numbers
 
     streamlit run app.py
 """
@@ -17,11 +19,14 @@ import pandas as pd
 import streamlit as st
 
 import assistant
+import crop_advice
 import db
 import farm as farms
+import farmer_view as fv
 import llm
 import network
 import onboarding
+import weather
 from checker import KIND_LABEL, settings_for
 from knowledge import KIND_UNIT
 
@@ -33,6 +38,19 @@ st.markdown(
     .model{font-family:monospace;font-size:.72rem;background:#eef3ee;border-radius:4px;padding:1px 6px;color:#2d744d}
     .rtl{direction:rtl;text-align:right;font-size:1.05rem;line-height:1.8}
     .flag{background:rgba(224,138,0,.14);color:inherit;border-left:3px solid #e08a00;padding:.35rem .7rem;margin:.25rem 0;border-radius:3px}
+    .bed{border-radius:14px;padding:1rem 1.1rem;margin-bottom:.6rem;border:1px solid rgba(128,128,128,.25)}
+    .bed.ok{background:rgba(46,160,90,.12);border-left:6px solid #2ea05a}
+    .bed.watch{background:rgba(224,138,0,.13);border-left:6px solid #e08a00}
+    .bed.act{background:rgba(215,60,60,.13);border-left:6px solid #d73c3c}
+    .bed.none{background:rgba(128,128,128,.10);border-left:6px solid #888}
+    .bed h3{margin:.1rem 0 .3rem 0;font-size:1.25rem}
+    .bed .big{font-size:1.15rem;font-weight:600;margin:.2rem 0}
+    .bed .facts{opacity:.85;font-size:.95rem}
+    .advice{font-size:1.2rem;line-height:1.7;padding:.8rem 1rem;border-radius:12px;background:rgba(46,120,200,.10)}
+    .crop{border-radius:12px;padding:.8rem 1rem;border:1px solid rgba(128,128,128,.25);height:100%}
+    .crop .name{font-size:1.2rem;font-weight:700}
+    .crop .money{font-size:1.1rem;font-weight:600;color:#2ea05a}
+    .ar, .ar *{direction:rtl;text-align:right}
     </style>""",
     unsafe_allow_html=True,
 )
@@ -51,16 +69,27 @@ def installed_models() -> list[str]:
     return llm.available_models()
 
 
-def sidebar() -> dict:
+def sidebar(show_models: bool = True) -> dict:
+    """The model route (OpenRouter first, the default). Farmers never need to touch it."""
     st.sidebar.markdown("### 🌱 Hydro Monitor")
-    name = st.sidebar.selectbox("Where models run", list(ROUTES), key="route",
-                                help=" · ".join(f"{k}: {v['description']}" for k, v in ROUTES.items()))
+    box = st.sidebar.expander("AI settings", expanded=show_models) if not show_models else st.sidebar
+    name = box.selectbox("Where models run", list(ROUTES), key="route",
+                         help=" · ".join(f"{k}: {v['description']}" for k, v in ROUTES.items()))
     route = ROUTES[name]
-    models = installed_models()
-    st.sidebar.caption("Ollama models: " + (", ".join(models) or "none (start Ollama)"))
+    if show_models:
+        models = installed_models()
+        box.caption("Ollama models: " + (", ".join(models) or "none (start Ollama)"))
     if name != "local" and not any(llm.provider_ready(m) for m in [route["fallback"], *route["map"].values()]):
-        st.sidebar.warning("Set OPENROUTER_API_KEY in arm/.env to use this route.")
+        box.warning("Set OPENROUTER_API_KEY in arm/.env to use this route.")
+    if llm.budget.usage():
+        box.caption("Cloud requests: " + ", ".join(f"{k} {v}" for k, v in llm.budget.usage().items()))
     return {"name": name, **route}
+
+
+def language() -> bool:
+    """True for Arabic. Remembered across pages."""
+    choice = st.sidebar.radio("Language · اللغة", ["English", "العربية"], key="lang", horizontal=True)
+    return choice == "العربية"
 
 
 # ── Farm page ────────────────────────────────────────────────────────────
@@ -201,10 +230,11 @@ def plan_section(con, farm: dict, plan: dict) -> None:
                 props = [f"- {p['field_id']} {p['kind']} {p['min']:g}–{p['max']:g}: {p['reason']}" for p in r.get("ranges", [])]
                 props += [f"- {p['field_id']} pump {p['seconds']} s: {p['reason']}" for p in r.get("pump_seconds", [])]
                 c.markdown("**Proposes**\n" + "\n".join(props) if props else "")
-    if plan.get("advice"):
+    tips = fv.market_tips(plan)
+    if tips:
         st.markdown("**Market & Strategy advice** (extra, never changes a range)")
-        cards = st.columns(len(plan["advice"]))
-        for card, item in zip(cards, plan["advice"]):
+        cards = st.columns(len(tips))
+        for card, item in zip(cards, tips):
             with card.container(border=True):
                 st.markdown(f"**{item['title']}**")
                 st.write(item["detail"])
@@ -214,7 +244,7 @@ def plan_section(con, farm: dict, plan: dict) -> None:
             st.json(plan["summaries"], expanded=False)
 
 
-def farm_page() -> None:
+def dev_page() -> None:
     route = sidebar()
     con = connection()
     farm = farms.load_farm()
@@ -223,7 +253,7 @@ def farm_page() -> None:
     profile = farm["profile"]
     auto = st.sidebar.toggle("Live refresh (10 s)", value=False)
 
-    st.markdown('<div class="kicker">Hydro Monitor · Reboot the Earth · Doha</div>', unsafe_allow_html=True)
+    st.markdown('<div class="kicker">Hydro Monitor · Developer board</div>', unsafe_allow_html=True)
     st.title(profile["name"])
     st.caption(f"{profile['location']} · {profile['crop']} · " + ", ".join(
         f"{f['field_id']} {f['type']} {f['size_m'][0]:g}×{f['size_m'][1]:g} m" for f in profile["fields"]))
@@ -306,41 +336,220 @@ def farm_page() -> None:
         st.rerun()
 
 
+# ── Farmer board ─────────────────────────────────────────────────────────
+@st.cache_data(ttl=1800, show_spinner=False)
+def forecast_today(lat: float, lon: float) -> dict | None:
+    from datetime import date
+
+    return weather.day_summary(weather.forecast(lat, lon), date.today())
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def crops_for(farm_id: str) -> dict:
+    return crop_advice.suggest(farms.load_farm(farm_id))
+
+
+def _html(text: str, ar: bool, cls: str = "") -> None:
+    st.markdown(f'<div class="{cls} {"ar" if ar else ""}">{text}</div>', unsafe_allow_html=True)
+
+
+WATER_ICON = {"low": "💧", "medium": "💧💧", "high": "💧💧💧"}
+
+
+def crop_card(r: dict, ar: bool, area: int) -> None:
+    name = r["ar"] if ar else r["name"]
+    money = f"≈ {r['qr_per_harvest']:,} QR" if area else f"≈ {r['qr_m2']} QR/m²"
+    reasons = r.get("reasons_ar" if ar else "reasons") or r["reasons"]
+    conf = fv.t(r["confidence"], ar) if r["confidence"] in ("official", "estimate", "proxy", "farmer") else r["confidence"]
+    _html(f'<div class="name">{name}</div>'
+          f'<div>{fv.t("ready_in", ar)} {r["days"]} {fv.t("days", ar)}</div>'
+          f'<div class="money">{money}</div><div style="opacity:.75;font-size:.85rem">{fv.t("per_harvest", ar) if area else ""} · {conf}</div>'
+          f'<div>{fv.t("water_need", ar)}: {WATER_ICON[r["water"]]} · {fv.t("care", ar)}: {fv.t(r["care"], ar)}</div>'
+          f'<div style="opacity:.85;font-size:.9rem;margin-top:.3rem">' + "<br>".join(f"• {x}" for x in reasons[:3]) + "</div>",
+          ar, "crop")
+
+
+def farmer_page() -> None:
+    ar = language()
+    route = sidebar(show_models=False)
+    con = connection()
+    farm = farms.load_farm()
+    profile = farm["profile"]
+    plan = db.latest_plan(con, farm["id"])
+    t = lambda key, **kw: fv.t(key, ar, **kw)   # noqa: E731
+
+    updated = fv.updated_at(con, farm)
+    _html(f'<div class="kicker">Hydro Monitor</div>', ar)
+    st.title(f"🌱 {profile['name']}")
+    fc = forecast_today(profile.get("latitude") or 25.29, profile.get("longitude") or 51.53)
+    bits = [f"{profile['location']}"]
+    if fc:
+        bits.append(f"☀️ {t('weather')}: {t('up_to')} {fc['temp_max']:.0f} °C, {t('hottest')} {fc['hottest_hour']}")
+    if updated:
+        bits.append(f"{t('updated')} {updated}")
+    _html(" · ".join(bits), ar)
+
+    # 1. the beds, in plain words
+    st.subheader(t("beds"))
+    cards = fv.bed_cards(con, farm, plan, ar)
+    icon = {"ok": "🟢", "watch": "🟠", "act": "🔴", "none": "⚪"}
+    cols = st.columns(min(3, len(cards)) or 1)
+    for i, c in enumerate(cards):
+        with cols[i % len(cols)]:
+            crop_line = " · ".join(x for x in (c["crop"], c["day"], c["timing"]) if x)
+            facts = []
+            if c["soil"] is not None:
+                facts.append(f"🌱 {t('soil')} {c['soil']:.0f}%")
+            if c["temp"] is not None:
+                facts.append(f"🌡️ {t('air')} {c['temp']:.0f} °C")
+            if c["tank"] is not None:
+                facts.append(f"🛢️ {t('tank')} {c['tank']:.0f}%")
+            facts.append(f"🚿 {t('watered')}: {c['watered']}")
+            _html(f'<h3>{icon[c["level"]]} {c["field_id"]} · {crop_line}</h3>'
+                  f'<div class="big">{c["headline"]}</div>'
+                  + "".join(f"<div>{m}</div>" for m in c["more"])
+                  + f'<div class="facts">{" · ".join(facts)}</div>', ar, f"bed {c['level']}")
+
+    # 2. today's advice from the AI team
+    st.subheader(t("advice"))
+    if plan and plan.get("reports"):
+        message = plan.get("message_ar") if ar and plan.get("message_ar") else plan.get("message_en") or ""
+        _html(message, ar, "advice")
+        decisions = db.approvals(con, plan["version"])
+        m1, m2, _ = st.columns([1.1, 1.5, 3.4])
+        if m1.button(f"👍 {t('helpful')}", key="msg_ok"):
+            db.add_approval(con, plan["version"], "message", "approve")
+            st.toast(t("thanks"))
+        with m2.popover(f"✏️ {t('correct')}"):
+            fix = st.text_input(t("correct_q"), key="msg_fix")
+            if st.button(t("save"), key="msg_save") and fix:
+                db.add_approval(con, plan["version"], "message", "correct", fix)
+                st.toast(t("thanks"))
+        todos = plan.get("todos") or []
+        todos_ar = plan.get("todos_ar") or []
+        if todos:
+            st.markdown(f"**{t('todo')}**")
+        for i, todo in enumerate(todos):
+            text = todos_ar[i] if ar and i < len(todos_ar) else todo
+            item = f"todo:{i + 1}"
+            state = decisions.get(item)
+            a, b, c = st.columns([6, 1, 1.3])
+            with a:
+                _html(("✅ " if state and state["decision"] == "done" else "⬜ ") + text, ar)
+            if b.button(t("done"), key=f"done{i}"):
+                db.add_approval(con, plan["version"], item, "done")
+                st.rerun()
+            with c.popover(f"✏️ {t('correct')}"):
+                fix = st.text_input(t("correct_q"), key=f"fix{i}")
+                if st.button(t("save"), key=f"save{i}") and fix:
+                    db.add_approval(con, plan["version"], item, "correct", fix)
+                    st.rerun()
+    else:
+        st.info(t("no_plan"))
+    if st.button(f"🔄 {t('refresh')}", help=t("refresh_help")):
+        with st.status(t("refresh_help"), expanded=False) as status:
+            result = network.run(con, trigger="button", route=route["name"], progress=status.write)
+            status.update(state="complete" if result["status"] == "ok" else "error",
+                          label="✓" if result["status"] == "ok" else result.get("error", "failed"))
+        if result["status"] == "ok":
+            st.rerun()
+
+    # 3. what to plant
+    st.subheader(f"🌾 {t('plant')}")
+    advice = crops_for(farm["id"])
+    groups: dict[str, list[str]] = {}
+    for field_id, f in advice["fields"].items():   # beds with the same suggestions are shown once
+        sig = json.dumps([r["crop"] for r in f["now"]] + [r["crop"] for r in f["later"]]) + str(f["covered"])
+        groups.setdefault(sig, []).append(field_id)
+    for fields in groups.values():
+        f = advice["fields"][fields[0]]
+        label = " · ".join(fields) + (f" ({f['area_m2']:,} m²)" if len(fields) == 1 and f["area_m2"] else "")
+        st.markdown(f"**{label}** — {t('plant_now')}")
+        if f["now"]:
+            cols = st.columns(len(f["now"]))
+            for col, r in zip(cols, f["now"]):
+                with col:
+                    crop_card(r, ar, f["area_m2"])
+        if f["later"]:
+            later = " · ".join(f"**{fv.month_name(r['plant_from_month'], ar)}**: {r['ar'] if ar else r['name']}" for r in f["later"])
+            _html(f"📅 {t('later')}: " + later.replace("**", ""), ar)
+    st.caption(t("gross"))
+
+    tips = fv.market_tips(plan)
+    if tips:
+        with st.expander(f"💰 {t('market')}"):
+            for tip in tips:
+                st.markdown(f"**{tip['title']}** — {tip['detail']}")
+
+    # 4. notes and questions
+    left, right = st.columns([1, 1.4])
+    with left:
+        st.subheader(f"📝 {t('notes')}")
+        with st.form("note", clear_on_submit=True):
+            field = st.selectbox("Bed", [f["field_id"] for f in profile["fields"]], label_visibility="collapsed")
+            text = st.text_input("Note", placeholder=t("note_ph"), label_visibility="collapsed")
+            if st.form_submit_button(t("add")) and text:
+                db.add_note(con, field, text)
+                st.toast(t("thanks"))
+        for n in db.notes(con, limit=3):
+            st.caption(f"{n['field_id']} · {n['text']}")
+    with right:
+        st.subheader(f"💬 {t('ask')}")
+        chat = st.session_state.setdefault("farmer_chat", [])
+        for turn in chat[-6:]:
+            with st.chat_message(turn["role"]):
+                st.write(turn["text"])
+        question = st.chat_input(t("ask_ph"))
+        if question:
+            chat.append({"role": "user", "text": question})
+            with st.spinner("…"):
+                reply = assistant.answer(question, farm, plan, route)
+            chat.append({"role": "assistant", "text": reply["text"]})
+            st.rerun()
+
+
 # ── Onboarding page ──────────────────────────────────────────────────────
 EXAMPLE = [   # the plan's worked example (6.1), for rehearsing the demo
     "Near Al Khor, north of Doha.",
-    "Purple amaranth, in two soil beds, each about 10 by 20 metres. I water with a hose from a tank.",
-    "Open air. Sometimes I put up shade cloth.",
-    "About three weeks ago. Granular NPK once a month.",
-    "Electricity in the shed, about 30 metres away. Mobile data works.",
+    "Two soil beds, each about 10 by 20 metres, in the open air. Sometimes I put up shade cloth.",
+    "Purple amaranth.",
+    "About three weeks ago.",
+    "From a tank, I water with a hose.",
+    "Granular NPK once a month.",
+    "Electricity in the shed, about 30 metres away.",
+    "Mobile data works.",
     "In the heat the leaves go pale and burn at the edges, and I never know if I'm watering too much.",
 ]
 
 
 def onboarding_page() -> None:
-    route = sidebar()
+    ar = language()
+    route = sidebar(show_models=False)
     model = onboarding.onboarding_model(route)
     s = st.session_state
-    if "ob_history" not in s or st.sidebar.button("Start over"):
-        s.ob_history = [{"role": "assistant", "text": "Hello! I'll help set up the system for your farm. Where is it?"}]
-        s.ob_profile, s.ob_done, s.ob_parts = onboarding.empty_profile(), False, None
+    if "ob_history" not in s or st.sidebar.button("Start over · ابدأ من جديد"):
+        opening, profile = onboarding.first_question()
+        if ar:
+            opening = "مرحباً! سأساعدك في إعداد نظام Hydro Monitor لمزرعتك. " + onboarding.QUESTIONS["location"][1]
+        s.ob_history = [{"role": "assistant", "text": opening}]
+        s.ob_profile, s.ob_done, s.ob_parts = profile, False, None
 
-    st.markdown('<div class="kicker">Hydro Monitor · Onboarding assistant</div>', unsafe_allow_html=True)
-    st.title("Tell us about your farm")
-    st.caption(f"The farmer describes the farm in their own words; the assistant ({model}) asks follow-ups and does the "
-               "structuring. It looks up the location and weather (Open-Meteo), and designs the hardware and the agent network. "
-               "A person on the team reviews everything before it is installed or run.")
+    st.markdown('<div class="kicker">Hydro Monitor · Set up a farm</div>', unsafe_allow_html=True)
+    st.title("أخبرنا عن مزرعتك" if ar else "Tell us about your farm")
+    st.caption(f"The assistant ({model}) asks one question at a time, looks up your area's weather, and designs the sensors "
+               "and the AI team for your farm. Answer in your own words, in Arabic or English; 'none' or 'don't know' is "
+               "fine. A person from our team checks everything before anything is installed.")
 
     for turn in s.ob_history:
         if turn["role"] == "tool":
-            st.caption(f"🔎 (tools) {turn['text']}")
+            st.caption(f"🔎 {turn['text']}")
         else:
             with st.chat_message("user" if turn["role"] == "farmer" else "assistant"):
                 st.write(turn["text"])
 
     def say(text: str) -> None:
         s.ob_history.append({"role": "farmer", "text": text})
-        with st.spinner("The assistant is thinking…"):
+        with st.spinner("…"):
             out = onboarding.step(s.ob_history, s.ob_profile, model)
         s.ob_profile = out["profile"]
         if out["tool"]:
@@ -348,29 +557,41 @@ def onboarding_page() -> None:
         s.ob_history.append({"role": "assistant", "text": out["reply"]})
         if out["done"] and not s.ob_done:
             s.ob_done = True
-            with st.spinner("Designing the hardware and the agent network…"):
-                farm_id = onboarding.slug(s.ob_profile.get("place") or s.ob_profile["location"])
-                s.ob_parts = onboarding.design(s.ob_profile, farm_id, model)
+            with st.spinner("Designing the sensors, the AI team and crop suggestions…"):
+                public = onboarding.public_profile(s.ob_profile)
+                s.ob_parts = onboarding.design(public, onboarding.slug(public.get("place") or public["location"]), model)
             s.ob_history.append({"role": "assistant", "text": onboarding.proposal_text(s.ob_parts)})
 
     if not s.ob_done:
-        farmer_turns = sum(1 for t in s.ob_history if t["role"] == "farmer")
+        farmer_turns = sum(1 for turn in s.ob_history if turn["role"] == "farmer")
         if farmer_turns < len(EXAMPLE) and st.button(f"Say the plan's example line {farmer_turns + 1}/{len(EXAMPLE)}",
                                                      help=EXAMPLE[farmer_turns]):
             say(EXAMPLE[farmer_turns])
             st.rerun()
-        text = st.chat_input("Describe your farm…")
+        text = st.chat_input("اكتب هنا…" if ar else "Type your answer…")
         if text:
             say(text)
             st.rerun()
         with st.sidebar.expander("Profile so far"):
-            st.json(s.ob_profile)
-            st.caption("Still missing: " + (", ".join(onboarding.missing(s.ob_profile)) or "nothing"))
+            st.json(onboarding.public_profile(s.ob_profile))
+            st.caption("Still to ask: " + (", ".join(onboarding.missing(s.ob_profile)) or "nothing")
+                       + " · null = answered 'none / don't know'")
         return
 
     parts = s.ob_parts
     st.markdown('<div class="step">WHAT THE ASSISTANT PRODUCED · FOR TEAM REVIEW</div>', unsafe_allow_html=True)
-    t1, t2, t3, t4 = st.tabs(["1 · Farm profile", "2 · Hardware plan", "3 · Hard limits", "4 · Agent network"])
+    t0, t1, t2, t3, t4 = st.tabs(["🌾 Crop suggestions", "1 · Farm profile", "2 · Hardware plan", "3 · Hard limits", "4 · Agent network"])
+    with t0:
+        for field_id, f in parts["crops"]["fields"].items():
+            st.markdown(f"**{field_id}** ({f['area_m2']:,} m², {'greenhouse' if f['covered'] else 'open air'}) — {fv.t('plant_now', ar)}")
+            cols = st.columns(max(1, len(f["now"])))
+            for col, r in zip(cols, f["now"]):
+                with col:
+                    crop_card(r, ar, f["area_m2"])
+            if f["later"]:
+                st.caption("Later: " + " · ".join(f"{r['plant_from_month']}: {r['name']}" for r in f["later"]))
+            break   # beds share the climate: one set of cards is enough here
+        st.caption(" ".join(parts["crops"]["notes"]))
     with t1:
         st.json(parts["profile"])
     with t2:
@@ -400,12 +621,11 @@ def onboarding_page() -> None:
             st.json([d["agent"] for d in net["departments"]], expanded=False)
 
     farm_id = st.text_input("Farm id (folder name)", parts["profile"]["farm_id"])
-    exists = (farms.FARMS / farm_id / "profile.json").exists()
-    if exists:
+    if (farms.FARMS / farm_id / "profile.json").exists():
         st.warning(f"farms/{farm_id} already exists: approving replaces it.")
     if st.button("✅ Team approves: save and go live", type="primary"):
-        for part in parts.values():
-            part["farm_id"] = farm_id
+        for key in farms.PARTS:
+            parts[key]["farm_id"] = farm_id
         parts["network"]["designed_by"] = "onboarding assistant, approved by the team"
         farms.save_farm(farm_id, parts)
         farms.set_active(farm_id)
@@ -413,9 +633,10 @@ def onboarding_page() -> None:
         db.save_plan(con, farm_id, farms.local_now(farms.load_farm(farm_id)).isoformat(timespec="seconds"),
                      parts["limits"]["start"], made_by="onboarding (starting ranges)", trigger="onboarding",
                      message_en="Starting ranges from onboarding.", todos=[], flags=[])
-        st.success(f"Saved farms/{farm_id} and made it the active farm. The master can fetch the starting ranges now; "
-                   "open the Farm page and press Run now for the first agent run.")
+        crops_for.clear()
+        st.success(f"Saved farms/{farm_id} and made it the active farm. Open 'My farm' to see it.")
 
 
-st.navigation([st.Page(farm_page, title="Farm", icon="🌱", default=True),
-               st.Page(onboarding_page, title="Onboarding", icon="💬")]).run()
+st.navigation([st.Page(farmer_page, title="My farm", icon="🌱", default=True),
+               st.Page(onboarding_page, title="Set up a farm", icon="💬"),
+               st.Page(dev_page, title="Developer", icon="🛠️")]).run()

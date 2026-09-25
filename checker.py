@@ -15,6 +15,12 @@ KIND_LABEL = {"soil_moisture": ("soil moisture", "%"), "temp_air": ("air tempera
               "humidity": ("humidity", "%"), "level": ("tank level", "%"), "pump_seconds": ("pump run", "s")}
 
 
+# How far one plan may move a setting from the value in force. A plan can still go all the way over a few
+# versions, but one bad answer can't swing the farm (e.g. a pump run cut from 120 s to 10 s in a heatwave).
+MAX_STEP = {"soil_moisture": 10.0, "temp_air": 4.0, "humidity": 15.0, "level": 10.0}
+MAX_PUMP_CHANGE = 0.5          # pump_seconds may change by at most 50 % per plan
+
+
 def settings_for(kinds: list[str]) -> list[str]:
     """The ranges-file settings a field can have: bands for its sensors, plus the pump run."""
     return [k for k in RANGE_KINDS if k in kinds] + ["pump_seconds"]
@@ -56,6 +62,14 @@ def check(proposed: dict[str, dict[str, Any]], current: dict[str, dict[str, Any]
                     edge = "above" if seconds > hi_hard else "below"
                     flag(field, setting, "clamped", seconds, used,
                          f"{seconds:g} {unit} is {edge} the {hi_hard if edge == 'above' else lo_hard:g} {unit} hard limit")
+                before = _num(now.get(setting))
+                if before and abs(used - before) > before * MAX_PUMP_CHANGE:
+                    stepped = int(round(before * (1 + MAX_PUMP_CHANGE if used > before else 1 - MAX_PUMP_CHANGE)))
+                    stepped = int(min(max(stepped, lo_hard), hi_hard))
+                    flag(field, setting, "limited", seconds, stepped,
+                         f"{before:g} → {seconds:g} {unit} is too big a change for one plan (at most "
+                         f"{MAX_PUMP_CHANGE:.0%}): moved to {stepped} {unit}")
+                    used = stepped
                 out[setting] = used
                 continue
             pair = value if isinstance(value, (list, tuple)) and len(value) == 2 else None
@@ -79,6 +93,15 @@ def check(proposed: dict[str, dict[str, Any]], current: dict[str, dict[str, Any]
             if used != [round(lo, 1), round(hi, 1)]:
                 flag(field, setting, "clamped", [lo, hi], used,
                      f"{name} {lo:g}–{hi:g} {unit} goes past the {lo_hard:g}–{hi_hard:g} {unit} hard limits")
+            before = now.get(setting)
+            step = MAX_STEP.get(setting)
+            if before and step and max(abs(used[0] - before[0]), abs(used[1] - before[1])) > step:
+                limited = [round(min(max(used[0], before[0] - step), before[0] + step), 1),
+                           round(min(max(used[1], before[1] - step), before[1] + step), 1)]
+                if limited[0] < limited[1]:
+                    flag(field, setting, "limited", used, limited,
+                         f"{name} moved more than {step:g} {unit} in one plan: stepped to {limited[0]:g}–{limited[1]:g} {unit}")
+                    used = limited
             out[setting] = used
         ranges[field] = out
     return ranges, flags
