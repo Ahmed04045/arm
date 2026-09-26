@@ -1,0 +1,118 @@
+{
+  "farm_id": "doha",
+  "name": "Doha farm",
+  "location": "Doha, Qatar",
+  "latitude": 25.285,
+  "longitude": 51.531,
+  "utc_offset": "+03:00",
+  "crop": "purple amaranth",
+  "stage": "land",
+  "land_m2": 20000,
+  "budget_qr": null,
+  "fields": [
+    {
+      "field_id": "F1",
+      "size_m": [
+        41.8,
+        41.9
+      ],
+      "type": "soil bed, open air",
+      "crop": "purple amaranth",
+      "planted": null,
+      "zone": "Z1",
+      "status": "planned"
+    },
+    {
+      "field_id": "F2",
+      "size_m": [
+        41.8,
+        41.9
+      ],
+      "type": "soil bed, open air",
+      "crop": "parsley",
+      "planted": null,
+      "zone": "Z1",
+      "status": "planned"
+    },
+    {
+      "field_id": "F3",
+      "size_m": [
+        41.8,
+        41.9
+      ],
+      "type": "soil bed, open air",
+      "crop": "radish",
+      "planted": null,
+      "zone": "Z1",
+      "status": "planned"
+    },
+    {
+      "field_id": "F4",
+      "size_m": [
+        41.8,
+        41.9
+      ],
+      "type": "soil bed, open air",
+      "crop": "purple amaranth",
+      "planted": null,
+      "zone": "Z1",
+      "status": "planned"
+    },
+    {
+      "field_id": "F5",
+      "size_m": [
+        41.8,
+        41.9
+      ],
+      "type": "soil bed, open air",
+      "crop": "parsley",
+      "planted": null,
+      "zone": "Z1",
+      "status": "planned"
+    },
+    {
+      "field_id": "F6",
+      "size_m": [
+        41.8,
+        41.9
+      ],
+      "type": "soil bed, open air",
+      "crop": "radish",
+      "planted": null,
+      "zone": "Z1",
+      "status": "planned"
+    },
+    {
+      "field_id": "F7",
+      "size_m": [
+        41.8,
+        41.9
+      ],
+      "type": "soil bed, shade house",
+      "crop": "parsley",
+      "planted": null,
+      "zone": "Z2",
+      "status": "planned"
+    },
+    {
+      "field_id": "F8",
+      "size_m": [
+        41.8,
+        41.9
+      ],
+      "type": "soil bed, shade house",
+      "crop": "radish",
+      "planted": null,
+      "zone": "Z2",
+      "status": "planned"
+    }
+  ],
+  "water": "tank using a hose",
+  "fertilizer": "",
+  "power": null,
+  "internet": "there is good WIFI",
+  "problems": [
+    "where to sell"
+  ],
+  "goal": "Income from selling at the market"
+}

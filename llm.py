@@ -125,11 +125,17 @@ def _extract_json(text: str) -> str:
     return match.group(0) if match else text
 
 
-def _cloud_chat(provider: str, model: str, messages: list[dict], as_json: bool, temperature: float) -> str | None:
+_exhausted: dict[str, date] = {}   # provider -> the day it answered "daily limit reached": don't ask again today
+
+
+def _cloud_chat(provider: str, model: str, messages: list[dict], as_json: bool, temperature: float,
+                timeout: float = TIMEOUT_S) -> str | None:
     cfg = PROVIDERS[provider]
     if cfg["key_env"] and not os.environ.get(cfg["key_env"]):
         log.warning("%s: %s is not set; keeping rule-based text", provider, cfg["key_env"])
         return None
+    if _exhausted.get(provider) == date.today():
+        return None                                  # the daily limit is used up: fail at once, no waiting
     if not budget.take(provider):
         log.warning("%s daily request budget used up; keeping rule-based text", provider)
         return None
@@ -150,11 +156,16 @@ def _cloud_chat(provider: str, model: str, messages: list[dict], as_json: bool, 
         headers["Authorization"] = f"Bearer {os.environ[cfg['key_env']]}"
     if provider == "openrouter":
         headers["X-Title"] = "QU-ARS amaranth agent network"
+    started = time.monotonic()
     for attempt in range(3):
         for json_attempt in (1, 2):
+            left = timeout - (time.monotonic() - started)   # one budget for all the retries together
+            if left <= 1:
+                log.warning("%s: no answer within %ss", provider, timeout)
+                return None
             request = urllib.request.Request(f"{cfg['base_url']}/chat/completions", json.dumps(body).encode(), headers)
             try:
-                with urllib.request.urlopen(request, timeout=TIMEOUT_S) as response:
+                with urllib.request.urlopen(request, timeout=left) as response:
                     data = json.loads(response.read())
                 text = (data["choices"][0]["message"].get("content") or "").strip()
                 return _extract_json(text) if as_json else text
@@ -163,6 +174,10 @@ def _cloud_chat(provider: str, model: str, messages: list[dict], as_json: bool, 
                 if err.code == 400 and "response_format" in body and json_attempt == 1:
                     body.pop("response_format")  # some models do not support JSON mode
                     continue
+                if err.code == 429 and ("per-day" in detail or "per day" in detail.lower()):
+                    _exhausted[provider] = date.today()   # retrying can't help until tomorrow
+                    log.warning("%s daily limit reached; using the fallback for the rest of today", provider)
+                    return None
                 retryable = provider == "openrouter" and err.code in (429, 500, 502, 503, 504)
                 if retryable and attempt < 2:
                     delay = 2 ** (attempt + 1)
@@ -177,15 +192,14 @@ def _cloud_chat(provider: str, model: str, messages: list[dict], as_json: bool, 
     return None
 
 
-def chat(model: str, system: str, prompt: str, as_json: bool = False, temperature: float = 0.2) -> str | None:
-    messages = [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
-    provider, name = split(model)
-    if provider != "ollama":
-        return _cloud_chat(provider, name, messages, as_json, temperature)
+INTERACTIVE_TIMEOUT_S = 45   # a person is waiting (onboarding, chat): give up on the cloud after this
+
+
+def _local_chat(name: str, messages: list[dict], as_json: bool, temperature: float, timeout: float) -> str | None:
     try:
         import ollama
 
-        response = ollama.Client(timeout=TIMEOUT_S).chat(
+        response = ollama.Client(timeout=timeout).chat(
             model=name, messages=messages, format="json" if as_json else "", options={"temperature": temperature},
         )
         return response["message"]["content"].strip()
@@ -193,8 +207,28 @@ def chat(model: str, system: str, prompt: str, as_json: bool = False, temperatur
         return None
 
 
-def chat_json(model: str, system: str, prompt: str, temperature: float = 0.2) -> dict[str, Any] | None:
-    text = chat(model, system, prompt, as_json=True, temperature=temperature)
+def chat(model: str, system: str, prompt: str, as_json: bool = False, temperature: float = 0.2,
+         timeout: float | None = None, local_fallback: bool = False) -> str | None:
+    """timeout: total seconds for the cloud call, retries included. local_fallback: if the cloud gives nothing
+    (busy, daily limit reached, too slow), answer with the best installed Ollama model instead."""
+    messages = [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
+    provider, name = split(model)
+    if provider == "ollama":
+        return _local_chat(name, messages, as_json, temperature, timeout or TIMEOUT_S)
+    text = _cloud_chat(provider, name, messages, as_json, temperature, timeout or TIMEOUT_S)
+    if text or not local_fallback:
+        return text
+    local = available_models()
+    best = next((m for m in ("qwen2.5:7b", "qwen2.5:3b") if m in local), local[0] if local else None)
+    if not best:
+        return None
+    log.warning("%s gave no answer; using local %s", provider, best)
+    return _local_chat(best, messages, as_json, temperature, TIMEOUT_S)
+
+
+def chat_json(model: str, system: str, prompt: str, temperature: float = 0.2, timeout: float | None = None,
+              local_fallback: bool = False) -> dict[str, Any] | None:
+    text = chat(model, system, prompt, as_json=True, temperature=temperature, timeout=timeout, local_fallback=local_fallback)
     if not text:
         return None
     try:
