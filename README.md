@@ -80,6 +80,25 @@ There are two demo farms; pick one with the **🏡 Farm** selector in the sideba
 4. **Get fresh advice:** the AI team runs (about 3–5 minutes; run it before going on stage). You get today's message and to-dos. On the Developer page, the code check has clamped any unsafe range.
 5. **Loop closed:** the master downloads the new version with `GET /ranges`.
 
+## Scripted demo (no AI, no internet needed)
+
+```powershell
+streamlit run demo_app.py
+```
+
+This is a separate, fully scripted version for the stage (`demo_app.py`, `demo_script.py`). It makes no model calls, so there's no quota and it has no network dependencies.
+
+- **Set up a farm** follows the demo setup prompt exactly:
+  - one friendly question per message, at most 3, only about what the farmer hasn't said yet;
+  - then a 3-sentence design (Starter Hydroponic Kit, Soil Bed Kit or Open Field Kit) and "Shall I show you the details?";
+  - on "yes": the 4 blocks (FARM PROFILE, HARDWARE PLAN, HARD LIMITS & STARTING RANGES, AGENT NETWORK) and "Ready for the Hydro Monitor team to review."
+  - "Say the example line" plays a rehearsed farmer. Answers like "not sure" or "no" never cause a repeated question.
+- **My farm** has the same look as the real board:
+  - readings, and the AI team's insights (written by rules from those readings), the big picture and to-dos;
+  - a drawing of the wall kit, parts and cost, and a harvest calendar;
+  - a question box with ready answers.
+- **Demo controls** in the sidebar switch the day (Normal, Heat wave, Tank running low, Pump running now), so you can show alerts on stage. **Reset the demo** starts over.
+
 ## Documentation
 
 | Document | For |

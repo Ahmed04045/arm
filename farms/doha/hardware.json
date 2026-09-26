@@ -1,0 +1,313 @@
+{
+  "farm_id": "doha",
+  "master": {
+    "module_id": "M1",
+    "hardware": "ESP32 + nRF24L01 + SD card",
+    "location": "new shed"
+  },
+  "fields": [
+    {
+      "field_id": "F1",
+      "sensor_set": {
+        "module_id": "S1",
+        "devices": [
+          {
+            "device_id": "dht11",
+            "kinds": [
+              "temp_air",
+              "humidity"
+            ]
+          },
+          {
+            "device_id": "soil",
+            "kinds": [
+              "soil_moisture"
+            ]
+          },
+          {
+            "device_id": "light",
+            "kinds": [
+              "light"
+            ]
+          },
+          {
+            "device_id": "level",
+            "kinds": [
+              "level"
+            ]
+          }
+        ]
+      },
+      "actuator_set": {
+        "module_id": "A1",
+        "devices": [
+          {
+            "device_id": "relay1",
+            "kind": "pump",
+            "what": "drip-line pump"
+          }
+        ]
+      }
+    },
+    {
+      "field_id": "F2",
+      "sensor_set": {
+        "module_id": "S2",
+        "devices": [
+          {
+            "device_id": "dht11",
+            "kinds": [
+              "temp_air",
+              "humidity"
+            ]
+          },
+          {
+            "device_id": "soil",
+            "kinds": [
+              "soil_moisture"
+            ]
+          },
+          {
+            "device_id": "light",
+            "kinds": [
+              "light"
+            ]
+          }
+        ]
+      },
+      "actuator_set": {
+        "module_id": "A2",
+        "devices": [
+          {
+            "device_id": "relay1",
+            "kind": "pump",
+            "what": "drip-line pump"
+          }
+        ]
+      }
+    },
+    {
+      "field_id": "F3",
+      "sensor_set": {
+        "module_id": "S3",
+        "devices": [
+          {
+            "device_id": "dht11",
+            "kinds": [
+              "temp_air",
+              "humidity"
+            ]
+          },
+          {
+            "device_id": "soil",
+            "kinds": [
+              "soil_moisture"
+            ]
+          },
+          {
+            "device_id": "light",
+            "kinds": [
+              "light"
+            ]
+          }
+        ]
+      },
+      "actuator_set": {
+        "module_id": "A3",
+        "devices": [
+          {
+            "device_id": "relay1",
+            "kind": "pump",
+            "what": "drip-line pump"
+          }
+        ]
+      }
+    },
+    {
+      "field_id": "F4",
+      "sensor_set": {
+        "module_id": "S4",
+        "devices": [
+          {
+            "device_id": "dht11",
+            "kinds": [
+              "temp_air",
+              "humidity"
+            ]
+          },
+          {
+            "device_id": "soil",
+            "kinds": [
+              "soil_moisture"
+            ]
+          },
+          {
+            "device_id": "light",
+            "kinds": [
+              "light"
+            ]
+          }
+        ]
+      },
+      "actuator_set": {
+        "module_id": "A4",
+        "devices": [
+          {
+            "device_id": "relay1",
+            "kind": "pump",
+            "what": "drip-line pump"
+          }
+        ]
+      }
+    },
+    {
+      "field_id": "F5",
+      "sensor_set": {
+        "module_id": "S5",
+        "devices": [
+          {
+            "device_id": "dht11",
+            "kinds": [
+              "temp_air",
+              "humidity"
+            ]
+          },
+          {
+            "device_id": "soil",
+            "kinds": [
+              "soil_moisture"
+            ]
+          },
+          {
+            "device_id": "light",
+            "kinds": [
+              "light"
+            ]
+          }
+        ]
+      },
+      "actuator_set": {
+        "module_id": "A5",
+        "devices": [
+          {
+            "device_id": "relay1",
+            "kind": "pump",
+            "what": "drip-line pump"
+          }
+        ]
+      }
+    },
+    {
+      "field_id": "F6",
+      "sensor_set": {
+        "module_id": "S6",
+        "devices": [
+          {
+            "device_id": "dht11",
+            "kinds": [
+              "temp_air",
+              "humidity"
+            ]
+          },
+          {
+            "device_id": "soil",
+            "kinds": [
+              "soil_moisture"
+            ]
+          },
+          {
+            "device_id": "light",
+            "kinds": [
+              "light"
+            ]
+          }
+        ]
+      },
+      "actuator_set": {
+        "module_id": "A6",
+        "devices": [
+          {
+            "device_id": "relay1",
+            "kind": "pump",
+            "what": "drip-line pump"
+          }
+        ]
+      }
+    },
+    {
+      "field_id": "F7",
+      "sensor_set": {
+        "module_id": "S7",
+        "devices": [
+          {
+            "device_id": "dht11",
+            "kinds": [
+              "temp_air",
+              "humidity"
+            ]
+          },
+          {
+            "device_id": "soil",
+            "kinds": [
+              "soil_moisture"
+            ]
+          },
+          {
+            "device_id": "light",
+            "kinds": [
+              "light"
+            ]
+          }
+        ]
+      },
+      "actuator_set": {
+        "module_id": "A7",
+        "devices": [
+          {
+            "device_id": "relay1",
+            "kind": "pump",
+            "what": "drip-line pump"
+          }
+        ]
+      }
+    },
+    {
+      "field_id": "F8",
+      "sensor_set": {
+        "module_id": "S8",
+        "devices": [
+          {
+            "device_id": "dht11",
+            "kinds": [
+              "temp_air",
+              "humidity"
+            ]
+          },
+          {
+            "device_id": "soil",
+            "kinds": [
+              "soil_moisture"
+            ]
+          },
+          {
+            "device_id": "light",
+            "kinds": [
+              "light"
+            ]
+          }
+        ]
+      },
+      "actuator_set": {
+        "module_id": "A8",
+        "devices": [
+          {
+            "device_id": "relay1",
+            "kind": "pump",
+            "what": "drip-line pump"
+          }
+        ]
+      }
+    }
+  ],
+  "notes": "The master node and the farm computer go in the new shed. There is no mains power, so the master needs a solar panel and battery. Only S1 measures the tank, since the beds share it."
+}

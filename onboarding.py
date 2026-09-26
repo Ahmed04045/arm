@@ -197,7 +197,7 @@ def _merge(old: dict[str, Any], new: dict[str, Any] | None, slot: str | None = N
     """Keep what we knew; take the model's values. A null from the model counts only for the slot the farmer was
     answering: models like to fill every key they haven't heard about with null, which would skip those questions."""
     out = {k: (list(v) if isinstance(v, list) else v) for k, v in old.items()}
-    new = new or {}
+    new = new if isinstance(new, dict) else {}   # models sometimes return a number or a string here
     if out.get("stage", "") == "" and slot == "stage" and new.get("stage") in ("land", "farming"):
         out["stage"] = new["stage"]
     for key, slot_name in (("land_m2", "land"), ("budget_qr", "budget")):
@@ -469,7 +469,9 @@ def step(history: list[dict[str, str]], profile: dict[str, Any], model: str) -> 
               + (f"Tool results: {tool_text}\n" if tool_text else "")
               + f"Conversation:\n{transcript}\n\nUpdate the profile from the farmer's last message and write your ack "
               + ("in Arabic." if ar else "in English."))
-    answer = llm.chat_json(model, SYSTEM, prompt, temperature=0.3) or {}
+    answer = llm.chat_json(model, SYSTEM, prompt, temperature=0.3, timeout=llm.INTERACTIVE_TIMEOUT_S, local_fallback=True) or {}
+    if not isinstance(answer, dict):
+        answer = {}
     updated = _merge(profile, answer.get("profile"), slot)
     updated = rule_fill(updated, farmer_said, slot)
     if slot and slot in missing(updated):
@@ -620,7 +622,8 @@ def _focus_lines(profile: dict[str, Any], model: str | None) -> dict[str, str]:
     prompt = (f"Farm profile: {json.dumps(profile, ensure_ascii=False)}\nFor each department id "
               f"({', '.join(d['id'] for d in TEMPLATE)}), write one sentence telling that department what to watch most "
               "on this farm, based on its crop, setup and problems. JSON only: {\"agri_environment\": \"...\", ...}")
-    out = llm.chat_json(model, "You design farm agent networks. Be specific and brief.", prompt, temperature=0.3) or {}
+    out = llm.chat_json(model, "You design farm agent networks. Be specific and brief.", prompt, temperature=0.3,
+                        timeout=llm.INTERACTIVE_TIMEOUT_S, local_fallback=True) or {}
     return {k: str(v) for k, v in out.items() if isinstance(v, str)}
 
 
@@ -726,7 +729,7 @@ def plan_story(profile: dict[str, Any], farm_plan_result: dict[str, Any], model:
                     f"Farm: {json.dumps(public_profile(profile), ensure_ascii=False)}\nPlan (code):\n"
                     f"{farm_plan.summary_text(farm_plan_result)}\n\nExplain this plan to the farmer in 3 short sentences: "
                     "what to build, what to grow when, and whether it pays (profit per year and payback). English only.",
-                    temperature=0.3)
+                    temperature=0.3, timeout=llm.INTERACTIVE_TIMEOUT_S, local_fallback=True)
     return text.strip() if text else None
 
 

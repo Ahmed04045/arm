@@ -67,7 +67,8 @@ def answer(question: str, farm: dict[str, Any], plan: dict[str, Any] | None, rou
             sources += [s["url"] for s in note["sources"][:3]]
     state = {"installed_models": llm.available_models(), "fallback_model": route["fallback"], "model_map": route["map"]}
     model = resolve_model(farm["network"]["director"]["agent"]["llm"], state)
-    text = llm.chat(model, SYSTEM, f"FACTS\n{context}\n\nFARMER'S QUESTION\n{question}", temperature=0.3)
+    text = llm.chat(model, SYSTEM, f"FACTS\n{context}\n\nFARMER'S QUESTION\n{question}", temperature=0.3,
+                    timeout=llm.INTERACTIVE_TIMEOUT_S, local_fallback=True)
     if text:
         return {"text": text, "by": model, "sources": sources}
     return {"text": "The assistant is offline (no local model or cloud key). "
